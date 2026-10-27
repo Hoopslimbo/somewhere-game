@@ -23,6 +23,13 @@ export const DEFAULT_CHAR = {
 function mat(color, rough = 0.85) {
   return new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0 });
 }
+// Darken a hex color by a factor, for detail pieces that must read as
+// separate from the base piece instead of a same-color bump.
+function shade(hex, f) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.round(((n >> 16) & 255) * f), g = Math.round(((n >> 8) & 255) * f), b = Math.round((n & 255) * f);
+  return '#' + ((r << 16) | (g << 8) | b).toString(16).padStart(6, '0');
+}
 function box(w, h, d, material, x, y, z, parent, rx = 0, ry = 0, rz = 0) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
   m.position.set(x, y, z);
@@ -61,16 +68,24 @@ export function buildCharacter(cfg = {}) {
   }
   // ---- Hips + belt ----
   box(0.48, 0.12, 0.26, pantsM, 0, 0.93, 0, g);
-  box(0.50, 0.06, 0.28, beltM, 0, 1.01, 0, g);
+  // Belt is 0.02 proud of the torso on all sides: its faces must NOT sit
+  // exactly coplanar with the torso faces (that z-fights and flickers).
+  box(0.50, 0.06, 0.32, beltM, 0, 1.01, 0, g);
   // ---- Torso: slim boxy shirt, collar, chest pocket ----
   box(0.52, 0.58, 0.28, shirtM, 0, 1.28, 0, g);
-  box(0.30, 0.07, 0.30, shirtM, 0, 1.59, 0, g); // collar
-  box(0.14, 0.12, 0.02, shirtM, -0.14, 1.38, 0.15, g); // chest pocket
+  // Collar stands 0.03 proud of the torso (was 0.01 — a hairline lip that
+  // aliased and shimmered as the preview swayed).
+  box(0.30, 0.07, 0.34, shirtM, 0, 1.59, 0, g); // collar
+  // Pocket in a darker shade of the shirt so it reads as a pocket instead
+  // of a same-color bump on the shirt front.
+  box(0.14, 0.12, 0.02, mat(shade(c.shirt, 0.82), 0.9), -0.14, 1.38, 0.15, g); // chest pocket
   // ---- Arms: hang straight, slightly out from the body ----
   const longSleeve = c.sleeve === 'long';
   for (const side of [-1, 1]) {
     const arm = new THREE.Group();
-    arm.position.set(side * 0.335, 1.52, 0);
+    // Arms overlap the torso by a solid 0.015 (was a 0.005 hairline touch
+    // that shimmered along the shoulder seam as the preview swayed).
+    arm.position.set(side * 0.325, 1.52, 0);
     arm.rotation.z = side * -0.05;
     g.add(arm);
     if (longSleeve) {

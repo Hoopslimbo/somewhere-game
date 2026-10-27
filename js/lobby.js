@@ -17,17 +17,24 @@ if (!S.worlds) {
   S.worlds = [{ id: uid(), name: 'First Island', seed: Math.floor(Math.random() * 100000), keepInv: false, friendly: true, created: Date.now() }];
   save('somewhere_worlds', S.worlds);
 }
-if (!S.servers) {
-  S.servers = [{ id: uid(), name: 'The Crew Server', members: 6, invited: [] }];
-  save('somewhere_servers', S.servers);
-}
-if (!S.friends) {
-  S.friends = [
-    { name: 'Maya', online: true }, { name: 'Jace', online: true },
-    { name: 'Riley', online: false }, { name: 'Noah', online: true },
-  ];
-  save('somewhere_friends', S.friends);
-}
+// No seeded friends, servers, or invites — everything starts EMPTY and only
+// real, user-created entries appear. Returning players get migrated: any
+// previously saved entries matching the old fake seeds are dropped.
+const FAKE_FRIEND_NAMES = ['Maya', 'Jace', 'Riley', 'Noah'];
+if (!S.servers) { S.servers = []; save('somewhere_servers', S.servers); }
+if (!S.friends) { S.friends = []; save('somewhere_friends', S.friends); }
+(function migrateFakeSeeds() {
+  const cleanFriends = S.friends.filter((f) => !FAKE_FRIEND_NAMES.includes(f.name));
+  if (cleanFriends.length !== S.friends.length) { S.friends = cleanFriends; save('somewhere_friends', S.friends); }
+  const cleanServers = S.servers.filter((s) => s.name !== 'The Crew Server');
+  if (cleanServers.length !== S.servers.length) { S.servers = cleanServers; save('somewhere_servers', S.servers); }
+  const oldInvites = load('somewhere_invites', null);
+  if (oldInvites) {
+    const cleanInvites = oldInvites.filter((inv) =>
+      inv.from !== 'Maya' && inv.from !== 'System' && !(inv.text || '').includes('The Crew Server'));
+    if (cleanInvites.length !== oldInvites.length) save('somewhere_invites', cleanInvites);
+  }
+})();
 S.selectedWorld = null;
 S.selectedServer = null;
 
@@ -169,19 +176,24 @@ function showLobby() {
   $('np-name').textContent = S.session.username;
   setPfp($('np-pfp'), S.session.username);
   $('set-username').value = S.session.username;
-  $('party-row').innerHTML = S.session.guest ? '' :
-    '<span class="party-chip">Party: you + Maya</span>';
+  // No fake party members — the party row stays empty until real party
+  // members exist.
+  $('party-row').innerHTML = '';
   renderWorlds(); renderServers(); renderFriends(); renderInvites(); renderKeybinds(); applySettings();
   switchTab('play');
   startLobbyLoop();
 }
+// Top tabs open a NEW MENU: a full menu screen of its own that covers the
+// lobby (hero + friends hidden), with a Back button returning to Play.
 function switchTab(tab) {
   document.querySelectorAll('.lobby-tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   for (const p of ['play', 'customize', 'invites', 'settings']) {
     $('panel-' + p).classList.toggle('hidden', p !== tab);
   }
+  $('lobby-screen').classList.toggle('menu-open', tab !== 'play');
 }
 document.querySelectorAll('.lobby-tab').forEach((b) => { b.onclick = () => switchTab(b.dataset.tab); });
+document.querySelectorAll('.menu-back').forEach((b) => { b.onclick = () => switchTab('play'); });
 
 // Netflix-style card art: a tiny deterministic island scene per world seed
 function seedRand(seed) {
@@ -352,6 +364,12 @@ $('btn-play').onclick = () => {
 
 function renderFriends() {
   $('friends-list').innerHTML = '';
+  if (!S.friends.length) {
+    const empty = document.createElement('p');
+    empty.className = 'fine';
+    empty.textContent = 'No friends yet — add someone by username below.';
+    $('friends-list').appendChild(empty);
+  }
   for (const f of S.friends) {
     const row = document.createElement('div');
     row.className = 'friend-row';
@@ -373,12 +391,16 @@ $('btn-add-friend').onclick = () => {
 };
 function renderInvites() {
   const list = $('invites-list');
-  const invites = load('somewhere_invites', null) || [
-    { id: uid(), from: 'Maya', text: 'invited you to the server “The Crew Server”', type: 'server' },
-    { id: uid(), from: 'System', text: 'Welcome to Somewhere! Your First Island is ready.', type: 'note' },
-  ];
-  save('somewhere_invites', invites);
+  // Invites start EMPTY — no seeded invites. Real invites (if any) carry
+  // their own server name; accepting one adds that server, never a fake.
+  const invites = load('somewhere_invites', null) || [];
   list.innerHTML = '';
+  if (!invites.length) {
+    const empty = document.createElement('p');
+    empty.className = 'fine';
+    empty.textContent = 'No invites yet.';
+    list.appendChild(empty);
+  }
   for (const inv of invites) {
     const row = document.createElement('div');
     row.className = 'invite-row';
@@ -388,8 +410,8 @@ function renderInvites() {
         : '') + '</span>';
     row.querySelector('.accept')?.addEventListener('click', () => {
       save('somewhere_invites', invites.filter((x) => x.id !== inv.id));
-      if (!S.servers.some((s) => s.name === 'The Crew Server')) {
-        S.servers.push({ id: uid(), name: 'The Crew Server', members: 7, invited: [] });
+      if (inv.server && !S.servers.some((s) => s.name === inv.server)) {
+        S.servers.push({ id: uid(), name: inv.server, members: 1, invited: [] });
         save('somewhere_servers', S.servers); renderServers();
       }
       renderInvites();

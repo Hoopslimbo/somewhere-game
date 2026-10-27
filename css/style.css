@@ -40,13 +40,17 @@ input[type=range], input[type=checkbox] { accent-color: var(--accent); }
 .pfp-preview { width: 72px; height: 72px; border-radius: 50%; object-fit: cover; align-self: center; border: 2px solid var(--line); }
 
 /* ---------- Lobby ---------- */
-/* The lobby page SCROLLS DOWN, Fortnite-style: hero (character + friends)
-   fills the first screen, and the worlds sections live below it. The
-   panorama canvas stays fixed behind the scrolling content. */
-#lobby-screen { overflow-y: auto; }
+/* Fixed lobby: the header, hero (character + friends), and tabs NEVER
+   scroll away. ONLY the worlds area scrolls, inside its own region below
+   the hero. The panorama canvas stays fixed behind everything. */
+#lobby-screen { overflow: hidden; display: flex; flex-direction: column; }
 #lobby-bg { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
-.lobby-header { position: sticky; top: 0; left: 0; right: 0; display: flex; align-items: center; padding: 14px 20px; background: linear-gradient(rgba(0,0,0,.55), transparent); z-index: 5; }
-.lobby-hero { position: relative; z-index: 4; min-height: calc(100vh - 66px); display: grid; grid-template-columns: 1fr 280px; align-items: center; gap: 20px; padding: 10px 24px 30px; }
+.lobby-header { position: relative; flex: none; display: flex; align-items: center; padding: 14px 20px; background: linear-gradient(rgba(0,0,0,.55), transparent); z-index: 5; }
+.lobby-hero { position: relative; z-index: 4; flex: none; display: grid; grid-template-columns: 1fr 280px; align-items: center; gap: 20px; padding: 10px 24px 30px; }
+/* Menu mode (a top tab other than Play): the hero + friends disappear and
+   the menu panel fills the screen below the header. */
+#lobby-screen.menu-open .lobby-hero { display: none; }
+.menu-back { margin-bottom: 12px; }
 .lobby-tabs { display: flex; gap: 8px; position: absolute; left: 50%; transform: translateX(-50%); }
 .lobby-tab { padding: 9px 18px; border-radius: 999px; border: 1px solid transparent; background: rgba(0,0,0,.35); color: var(--text); font-weight: 600; transition: background var(--ease), transform var(--ease), box-shadow var(--ease); }
 .lobby-tab:hover { background: rgba(255,255,255,.16); transform: translateY(-1px); }
@@ -70,7 +74,7 @@ input[type=range], input[type=checkbox] { accent-color: var(--accent); }
 .friend-row .f-name { flex: 1; }
 .add-friend { display: flex; gap: 6px; margin-top: 10px; }
 .add-friend input { flex: 1; min-width: 0; }
-.lobby-bottom { position: relative; margin: 0 18px 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 16px 18px; z-index: 5; backdrop-filter: blur(10px) saturate(1.15); box-shadow: var(--shadow); }
+.lobby-bottom { position: relative; flex: 1; min-height: 0; overflow-y: auto; margin: 0 18px 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 16px 18px; z-index: 5; backdrop-filter: blur(10px) saturate(1.15); box-shadow: var(--shadow); }
 .section-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 2px; }
 .section-head h3 { margin-bottom: 0; }
 .lobby-panel h3 { margin-bottom: 10px; font-size: 17px; letter-spacing: .2px; }

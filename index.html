@@ -47,7 +47,7 @@
     <nav class="lobby-tabs">
       <button data-tab="play" class="lobby-tab active">Play</button>
       <button data-tab="customize" class="lobby-tab">Customization</button>
-      <button data-tab="invites" class="lobby-tab">Invites <span id="invite-badge" class="badge">2</span></button>
+      <button data-tab="invites" class="lobby-tab">Invites <span id="invite-badge" class="badge"></span></button>
       <button data-tab="settings" class="lobby-tab">Settings</button>
     </nav>
     <div class="header-user">
@@ -89,10 +89,11 @@
         <button id="btn-new-server" class="btn small">+ New server</button>
       </div>
       <div id="servers-list" class="world-row"></div>
-      <p class="fine">Private only — no public servers. Worlds cap at 30. Servers have no cap. Scroll down to browse, then scroll a row sideways.</p>
+      <p class="fine">Private only — no public servers. Worlds cap at 30. Servers have no cap. Scroll inside the worlds area to browse, then scroll a row sideways.</p>
     </div>
     <!-- CUSTOMIZE TAB -->
     <div id="panel-customize" class="lobby-panel hidden">
+      <button class="btn small ghost menu-back">← Back to lobby</button>
       <h3>Customize your character</h3>
       <div class="cust-grid">
         <div class="cust-group"><label>Skin color</label><div id="cust-skin" class="swatches"></div></div>
@@ -108,11 +109,13 @@
     </div>
     <!-- INVITES TAB -->
     <div id="panel-invites" class="lobby-panel hidden">
+      <button class="btn small ghost menu-back">← Back to lobby</button>
       <h3>Notifications &amp; invites</h3>
       <div id="invites-list"></div>
     </div>
     <!-- SETTINGS TAB -->
     <div id="panel-settings" class="lobby-panel hidden">
+      <button class="btn small ghost menu-back">← Back to lobby</button>
       <h3>Settings</h3>
       <div class="settings-grid">
         <label>Brightness <input id="set-brightness" type="range" min="50" max="150" value="100"> <span id="brightness-val">100%</span></label>
