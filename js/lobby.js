@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { buildCharacter, SKIN_TONES, HAIR_COLORS, HAIR_STYLES, SHIRT_COLORS, PANTS_COLORS, SHOE_COLORS, DEFAULT_CHAR } from './character.js';
-import { buildWorld, makeSkyDome } from './world.js';
+import { buildWorld, makeSkyDome, heightAt } from './world.js';
 import { load, save, uid, hasBadWord, initialAvatar } from './data.js';
 import { uiIcon } from './icons.js';
 
@@ -119,6 +119,8 @@ function initLobby3D() {
   sun.position.set(60, 90, 30); sun.castShadow = true; panoScene.add(sun);
   const panoWorld = buildWorld(panoScene, 20261027); // the set lobby world, same for everyone
   panoScene.userData.center = panoWorld.spawn;
+  panoScene.userData.seed = 20261027; // set panorama world seed, same for everyone
+  panoScene.userData.camH = null; // smoothed orbit height, set on first frame
   panoCam = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 600);
 
   charRenderer = new THREE.WebGLRenderer({ canvas: $('char-canvas'), antialias: true, alpha: true });
@@ -147,9 +149,27 @@ function lobbyLoop() {
   if (!$('lobby-screen') || $('lobby-screen').classList.contains('hidden')) { lobbyRAF = null; return; }
   const dt = Math.min(lobbyClock.getDelta(), 0.05);
   const t = lobbyClock.elapsedTime;
-  const ang = t * 0.045; // slow panorama rotation, Minecraft-style
+  const ang = t * 0.045; // slow panorama rotation, Minecraft-style (speed unchanged)
   const ctr = panoScene.userData.center || { x: 0, y: 6, z: 0 };
-  panoCam.position.set(ctr.x + Math.cos(ang) * 48, ctr.y + 20, ctr.z + Math.sin(ang) * 48);
+  const seed = panoScene.userData.seed || 20261027;
+  const R = 48; // orbit radius unchanged, so the island still fills the frame
+  // Terrain-aware orbit height: the old fixed height (ctr.y + 20, ~25) put
+  // the camera INSIDE mountains for ~37% of each rotation — terrain on the
+  // orbit path around the panorama center reaches ~36. Sample the terrain
+  // under the camera and ahead along its path, and keep the camera above
+  // the highest of those samples by a safe margin.
+  let target = ctr.y + 20; // unchanged framing wherever the terrain is low
+  for (const ahead of [0, 0.1, 0.2, 0.35]) {
+    const a = ang + ahead;
+    const h = heightAt(ctr.x + Math.cos(a) * R, ctr.z + Math.sin(a) * R, seed);
+    target = Math.max(target, h + 8);
+  }
+  let camH = panoScene.userData.camH;
+  if (camH === null || camH === undefined) camH = target; // first frame: start clear
+  const rate = target > camH ? 6 : 1.8; // rise fast so we never clip, descend gently
+  camH += (target - camH) * Math.min(1, dt * rate);
+  panoScene.userData.camH = camH;
+  panoCam.position.set(ctr.x + Math.cos(ang) * R, camH, ctr.z + Math.sin(ang) * R);
   panoCam.lookAt(ctr.x, ctr.y + 2, ctr.z);
   panoRenderer.render(panoScene, panoCam);
   if (charGroup) charGroup.rotation.y = Math.sin(t * 0.35) * 0.35;
