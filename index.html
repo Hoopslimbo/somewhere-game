@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Somewhere</title>
+<link rel="icon" type="image/png" href="assets/logo.png">
+<link rel="stylesheet" href="css/style.css">
+<script type="importmap">
+{ "imports": { "three": "./assets/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="error-overlay" class="hidden"></div>
+
+<!-- ============ AUTH ============ -->
+<section id="auth-screen" class="screen">
+  <div class="auth-card">
+    <h1>Somewhere</h1>
+    <p class="tagline">A huge island. Your rules. Your world.</p>
+    <div class="auth-tabs">
+      <button id="tab-signin" class="auth-tab active">Sign in</button>
+      <button id="tab-create" class="auth-tab">Create account</button>
+    </div>
+    <div id="auth-error" class="auth-error hidden"></div>
+    <label>Email <input id="auth-email" type="email" placeholder="you@example.com" autocomplete="email"></label>
+    <label>Password <input id="auth-pass" type="password" placeholder="Password" autocomplete="current-password"></label>
+    <div id="create-fields" class="hidden">
+      <label>Username <span class="hint">(unique, max 15 characters)</span>
+        <input id="auth-user" type="text" maxlength="15" placeholder="Pick a username">
+      </label>
+      <label>Profile picture
+        <input id="auth-pfp" type="file" accept="image/*">
+      </label>
+      <img id="pfp-preview" class="pfp-preview hidden" alt="Profile picture preview">
+    </div>
+    <button id="auth-submit" class="btn primary big">Sign in</button>
+    <button id="auth-guest" class="btn ghost big">Continue as guest</button>
+    <p class="fine">Guest play is solo only and saves to this device. Sign up later to keep your progress and play with friends.</p>
+  </div>
+</section>
+
+<!-- ============ LOBBY ============ -->
+<section id="lobby-screen" class="screen hidden">
+  <canvas id="lobby-bg"></canvas>
+  <header class="lobby-header">
+    <nav class="lobby-tabs">
+      <button data-tab="play" class="lobby-tab active">Play</button>
+      <button data-tab="customize" class="lobby-tab">Customization</button>
+      <button data-tab="invites" class="lobby-tab">Invites <span id="invite-badge" class="badge">2</span></button>
+      <button data-tab="settings" class="lobby-tab">Settings</button>
+    </nav>
+    <div class="header-user">
+      <span id="header-username"></span>
+      <img id="header-pfp" class="mini-pfp" alt="">
+      <button id="btn-signout" class="btn small ghost">Sign out</button>
+    </div>
+  </header>
+
+  <div class="lobby-hero">
+    <div class="lobby-center">
+      <div class="nameplate"><span id="np-name"></span><img id="np-pfp" class="np-pfp" alt=""></div>
+      <canvas id="char-canvas" width="360" height="460"></canvas>
+      <div id="party-row" class="party-row"></div>
+      <button id="btn-play" class="btn primary big hidden">▶ Play</button>
+      <div id="selected-world-label" class="selected-world"></div>
+    </div>
+
+    <aside class="friends-panel">
+      <h3>Friends</h3>
+      <div id="friends-list"></div>
+      <div class="add-friend">
+        <input id="friend-name" type="text" maxlength="15" placeholder="Add by username">
+        <button id="btn-add-friend" class="btn small">Add</button>
+      </div>
+    </aside>
+  </div>
+
+  <div class="lobby-bottom">
+    <!-- PLAY TAB -->
+    <div id="panel-play" class="lobby-panel">
+      <div class="section-head">
+        <h3>Your Worlds</h3>
+        <button id="btn-new-world" class="btn small">+ New world</button>
+      </div>
+      <div id="worlds-list" class="world-row"></div>
+      <div class="section-head servers-head">
+        <h3>Shared Servers</h3>
+        <button id="btn-new-server" class="btn small">+ New server</button>
+      </div>
+      <div id="servers-list" class="world-row"></div>
+      <p class="fine">Private only — no public servers. Worlds cap at 30. Servers have no cap. Scroll down to browse, then scroll a row sideways.</p>
+    </div>
+    <!-- CUSTOMIZE TAB -->
+    <div id="panel-customize" class="lobby-panel hidden">
+      <h3>Customize your character</h3>
+      <div class="cust-grid">
+        <div class="cust-group"><label>Skin color</label><div id="cust-skin" class="swatches"></div></div>
+        <div class="cust-group"><label>Hair style</label><div id="cust-hair" class="chip-row"></div></div>
+        <div class="cust-group"><label>Hair color</label><div id="cust-haircolor" class="swatches"></div></div>
+        <div class="cust-group"><label>Shirt style</label><div id="cust-sleeve" class="chip-row"></div></div>
+        <div class="cust-group"><label>Shirt color</label><div id="cust-shirt" class="swatches"></div></div>
+        <div class="cust-group"><label>Pants</label><div id="cust-pants" class="chip-row"></div></div>
+        <div class="cust-group"><label>Pants color</label><div id="cust-pantscolor" class="swatches"></div></div>
+        <div class="cust-group"><label>Shoe color</label><div id="cust-shoes" class="swatches"></div></div>
+      </div>
+      <button id="btn-randomize" class="btn small">Randomize</button>
+    </div>
+    <!-- INVITES TAB -->
+    <div id="panel-invites" class="lobby-panel hidden">
+      <h3>Notifications &amp; invites</h3>
+      <div id="invites-list"></div>
+    </div>
+    <!-- SETTINGS TAB -->
+    <div id="panel-settings" class="lobby-panel hidden">
+      <h3>Settings</h3>
+      <div class="settings-grid">
+        <label>Brightness <input id="set-brightness" type="range" min="50" max="150" value="100"> <span id="brightness-val">100%</span></label>
+        <label>Master audio <input id="set-audio" type="range" min="0" max="100" value="80"> <span id="audio-val">80%</span></label>
+        <label>Voice chat mode
+          <select id="set-voice"><option value="party">Party voice chat</option><option value="proximity">Proximity chat</option></select>
+        </label>
+        <label>Microphone <select id="set-mic"><option>Default microphone</option></select></label>
+      </div>
+      <h4>Keybinds — click a key, then press a new one</h4>
+      <div id="keybinds" class="keybinds"></div>
+      <div class="settings-grid">
+        <label>Username <input id="set-username" type="text" maxlength="15"></label>
+        <label>Profile picture <input id="set-pfp" type="file" accept="image/*"></label>
+      </div>
+      <p class="fine">Controls: WASD move · Mouse look · Space jump · E interact · T chat · I inventory · B build mode · Q quick craft · H help · 1–7 hotbar · 8, 9, 0 permanent slots · Scroll to switch slots.</p>
+    </div>
+  </div>
+
+  <div id="world-dialog" class="dialog hidden">
+    <div class="dialog-card">
+      <h3 id="world-dialog-title">Create a world</h3>
+      <label>World name <input id="world-name" type="text" maxlength="24" placeholder="My island"></label>
+      <label class="check"><input id="world-keepinv" type="checkbox"> Keep inventory on death</label>
+      <label class="check"><input id="world-friendly" type="checkbox" checked> Friendly fire</label>
+      <div id="server-invite-row" class="hidden">
+        <label>Pre-invite friends <input id="server-invites" type="text" placeholder="usernames, separated by commas"></label>
+      </div>
+      <div class="dialog-actions">
+        <button id="world-cancel" class="btn ghost">Cancel</button>
+        <button id="world-create" class="btn primary">Create</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ GAME ============ -->
+<section id="game-screen" class="screen hidden">
+  <canvas id="game-canvas"></canvas>
+  <div class="vignette"></div>
+  <div id="crosshair">+</div>
+  <div id="interact-prompt" class="prompt hidden"></div>
+  <div id="center-toast" class="center-toast hidden"></div>
+
+  <div class="hud-top">
+    <div class="hud-right">
+      <div id="money" class="money"><svg class="di" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="#222" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="24" cy="24" r="14" fill="#f5c542"/><circle cx="24" cy="24" r="8" fill="#e0a91c"/></g></svg> 50</div>
+      <div id="fuel-wrap" class="fuel hidden"><svg class="di" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="#222" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="14" y="8" width="20" height="32" rx="3" fill="#c23b3b"/><rect x="18" y="13" width="12" height="9" rx="1" fill="#e8e8e8"/></g></svg> <div class="bar small"><div id="fuel-fill" class="fill fuel"></div></div></div>
+    </div>
+  </div>
+
+  <!-- Health + hunger live bottom-LEFT; no day display up top -->
+  <div class="vitals-bl">
+    <div class="bar-row"><span><svg class="di" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg"><path d="M24 40 L10 26 Q4 19 10 12 Q16 6 24 13 Q32 6 38 12 Q44 19 38 26 Z" fill="#e5484d" stroke="#222" stroke-width="2.2" stroke-linejoin="round"/></svg></span><div class="bar"><div id="health-fill" class="fill health"></div></div><span id="health-num"></span></div>
+    <div class="bar-row"><span><svg class="di" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="#222" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="24" cy="24" rx="13" ry="10" fill="#e87a1a" transform="rotate(-30 24 24)"/><line x1="33" y1="15" x2="40" y2="8"/><circle cx="41" cy="8" r="3" fill="#e8ddc8"/></g></svg></span><div class="bar"><div id="hunger-fill" class="fill hunger"></div></div><span id="hunger-num"></span></div>
+  </div>
+
+  <div id="chat-box" class="chat-box">
+    <div id="chat-log"></div>
+    <input id="chat-input" class="hidden" type="text" maxlength="200" placeholder="Type a message… (Enter to send, Esc to close)">
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <div id="help-panel" class="help-panel hidden"></div>
+
+  <div class="hud-bottom">
+    <div id="hotbar" class="hotbar"></div>
+    <div id="inv-panel" class="inv-panel hidden">
+      <div class="inv-head"><h3 id="inv-title">Inventory</h3><button id="inv-close" class="btn small ghost">✕</button></div>
+      <div id="inv-grid" class="inv-grid"></div>
+      <div class="inv-actions">
+        <button id="btn-quickcraft" class="btn small">Quick craft (Q)</button>
+        <button id="btn-craft" class="btn small">Workbench</button>
+      </div>
+      <div id="craft-list" class="craft-list"></div>
+    </div>
+    <div id="build-bar" class="build-bar hidden"></div>
+    <div id="shop-panel" class="shop-panel hidden"></div>
+  </div>
+</section>
+
+<script type="module" src="js/lobby.js"></script>
+<script type="module" src="js/game.js"></script>
+</body>
+</html>
