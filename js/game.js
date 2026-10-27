@@ -1515,15 +1515,15 @@ function renderInvGrid() {
   };
   for (let i = 0; i < 7; i++) grid.appendChild(mkSlot(P.hotbar[i] || null, i, 'hot'));
   for (let i = 0; i < invCap(); i++) grid.appendChild(mkSlot(P.inv[i] || null, i, 'inv'));
-  for (let i = 0; i < 3; i++) grid.appendChild(mkSlot(P.perm[i] || null, i, 'perm'));
+  // Permanent slots are NOT duplicated here — they live in the top hotbar row (8, 9, 0) only.
   const titleEl = $('inv-title');
   if (titleEl) titleEl.textContent = P.hasBackpack ? 'Backpack' : 'Inventory';
   const note = document.createElement('p');
   note.className = 'fine';
   note.style.gridColumn = '1 / -1';
   note.textContent = P.hasBackpack
-    ? `Backpack: 40 normal slots. Dashed slots are permanent — they can't be moved or changed. Keys 8, 9, 0 select them.`
-    : `10 normal slots — craft a Backpack (4 leather) to expand to 40. Dashed slots are permanent — they can't be moved or changed. Keys 8, 9, 0 select them.`;
+    ? `Backpack: 40 normal slots. Permanent slots (car key, house key) live in the top bar — press 8, 9, 0 to select them.`
+    : `10 normal slots — craft a Backpack (4 leather) to expand to 40. Permanent slots (car key, house key) live in the top bar — press 8, 9, 0 to select them.`;
   grid.appendChild(note);
 }
 $('inv-close').onclick = () => toggleInventory(false);
