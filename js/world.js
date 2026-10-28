@@ -45,47 +45,12 @@ export const SEA = 0;
 // so the coastline has bays and peninsulas instead of a straight shore.
 // Islands are WAY larger than the original 380-wide build: the landmass
 // radius roughly doubles (edge ~310–460) for ~4× the playable land area.
-// Cave carves (see below) are cut into the terrain itself, so heightAt
-// = base height + carve depression, keyed per seed.
-const caveCarvesBySeed = new Map();
-function carveDelta(x, z, seed) {
-  const carves = caveCarvesBySeed.get(seed >>> 0);
-  if (!carves) return 0;
-  let delta = 0;
-  for (const c of carves) {
-    const px = x - c.mx, pz = z - c.mz;
-    const u = px * c.dx + pz * c.dz; // 0 at mouth, + into the hill
-    const v = -px * c.dz + pz * c.dx; // sideways distance from tunnel axis
-    if (u < -1.5 || u > c.len + 1.5 || Math.abs(v) > c.halfW + 1.5) continue;
-    const along = sstep(-1.5, 1.0, u) * (1 - sstep(c.len - 2, c.len + 1.5, u));
-    const across = 1 - sstep(c.halfW, c.halfW + 1.5, Math.abs(v));
-    const shape = along * across;
-    if (!shape) continue;
-    // The tunnel floor sits near the mouth height and descends gently
-    // into the hill; the deeper the hillside rises above it, the deeper
-    // the cut — so the opening reads as a notch carved into the slope.
-    const floorH = c.mouthH - 0.12 * u;
-    const surface = baseHeightAt(x, z, seed);
-    delta -= Math.max(0, surface - floorH) * shape;
-  }
-  return delta;
-}
+// Caves REMOVED (2026-10-28, Liam): caves should come back as chance
+// parts of biomes, NOT as generated structures — so there is no carve
+// system at all now. heightAt is just the base terrain; mountains are
+// solid. The 'caved' biome (less snow, rockier) stays as terrain.
 export function heightAt(x, z, seed) {
-  return baseHeightAt(x, z, seed) + carveDelta(x, z, seed);
-}
-// True if (x, z) falls inside a cave carve (plus margin) — placements
-// (trees, rocks, chests, ground stones) skip carve ground so nothing
-// floats or sinks inside a tunnel mouth.
-export function inCaveCarve(x, z, seed, margin = 0) {
-  const carves = caveCarvesBySeed.get(seed >>> 0);
-  if (!carves) return false;
-  for (const c of carves) {
-    const px = x - c.mx, pz = z - c.mz;
-    const u = px * c.dx + pz * c.dz;
-    const v = -px * c.dz + pz * c.dx;
-    if (u >= -1.5 - margin && u <= c.len + 1.5 + margin && Math.abs(v) <= c.halfW + 1.5 + margin) return true;
-  }
-  return false;
+  return baseHeightAt(x, z, seed);
 }
 function baseHeightAt(x, z, seed) {
   const r = Math.hypot(x, z);
@@ -141,8 +106,8 @@ function biomeFrom(h, r, caveN) {
 }
 // Guaranteed caved hotspot: the same seeded massif that guarantees every
 // island has mountains also guarantees a caved region on its flanks.
-// Without this, some seeds (e.g. the demo seed 4242) roll zero caved
-// terrain at all, so no cave could ever spawn there.
+// (Cave structures are removed for now; 'caved' is terrain only until
+// caves return as chance biome features.)
 export function cavedHotspot(x, z, seed, h) {
   if (h <= 14) return false;
   const mx = Math.sin(seed * 12.9898) * 509, mz = Math.cos(seed * 78.233) * 509;
@@ -402,11 +367,6 @@ export function buildWorld(scene, seed) {
   // across (2150² / 760² = 8.0× area) at the same vertex density
   // (2150/1130 ≈ 760/400 ≈ 1.9 units per vertex).
   const SIZE = 2150, SEG = 1130;
-  // Cave carves are computed FIRST (own RNG stream, so the main rand
-  // stream — and therefore tree/rock/chest placement — is untouched)
-  // and registered before any heightAt call, so the terrain mesh itself
-  // carries the carved tunnel notches.
-  caveCarvesBySeed.set(seed >>> 0, planCaveCarves(seed));
   const geo = new THREE.PlaneGeometry(SIZE, SIZE, SEG, SEG);
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
@@ -503,7 +463,6 @@ export function buildWorld(scene, seed) {
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
-    if (inCaveCarve(x, z, seed, 1)) continue;
     const b = biomeAt(x, z, seed);
     const sl = slopeAt(x, z, seed);
     const grove = fbm(x * 0.01 + 500, z * 0.01, seed);
@@ -533,7 +492,6 @@ export function buildWorld(scene, seed) {
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
-    if (inCaveCarve(x, z, seed, 1)) continue;
     const sl = slopeAt(x, z, seed);
     if (sl < 0.7 && h < 14 && rand() < 0.45) continue; // rocks favor steeps + heights
     const iron = biomeAt(x, z, seed) === 'caved' ? rand() < 0.45 : rand() < 0.12;
@@ -554,13 +512,19 @@ export function buildWorld(scene, seed) {
     const x = spawn.x + (rand() - 0.5) * 44, z = spawn.z + (rand() - 0.5) * 44;
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
-    if (inCaveCarve(x, z, seed, 1)) continue;
     const s = 0.20 + rand() * 0.16;
     const st = new THREE.Mesh(jitteredRockGeo(s, rand), pick(MATS.stone, rand));
     st.position.set(x, h + 0.15, z); st.castShadow = true; scene.add(st);
     groundStones.push({ mesh: st, x, z, h });
   }
-  // Loot chests: varied size + lid tint, occasional crate beside
+  // Loot chests (REDESIGNED 2026-10-28, same look as the placed
+  // storage chest): deep-wood planked body with seam grooves, an
+  // arched lid, steel bands, brass latch, corner protectors — reads
+  // as a chest at a distance. The lid is a GROUP hinged at its back
+  // edge (origin at 0, 0.61, -0.35); opening rotates it around its
+  // local X axis so it swings up and back, never lifting off.
+  // Frequency cut ~3x (240 -> 80 attempts): loot chests are rarer now.
+  // Loot tables unchanged.
   const LOOT = [
     [{ id: 'leather', n: 2 }, { id: 'money', n: 25 }],
     [{ id: 'iron', n: 3 }, { id: 'seed_wheat', n: 4 }],
@@ -568,25 +532,51 @@ export function buildWorld(scene, seed) {
     [{ id: 'seed_carrot', n: 4 }, { id: 'money', n: 20 }],
     [{ id: 'iron', n: 2 }, { id: 'leather', n: 2 }, { id: 'seed_wheat', n: 3 }],
   ];
-  for (let i = 0; i < 240; i++) {
+  for (let i = 0; i < 80; i++) {
     const x = (rand() - 0.5) * (SIZE - 40), z = (rand() - 0.5) * (SIZE - 40);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
-    if (inCaveCarve(x, z, seed, 1)) continue;
     const grp = new THREE.Group();
-    const base = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.6, 0.7), MATS.chest);
-    base.position.y = 0.3; base.castShadow = true; grp.add(base);
-    const lid = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.25, 0.7), pick(MATS.chestLid, rand));
-    lid.position.y = 0.72; lid.castShadow = true; grp.add(lid);
-    // Metal bands + latch AFTER the lid: opening code uses children[1]
-    // as the lid, so nothing may be inserted before it.
+    const woodM = MATS.chest;
+    const darkM = new THREE.MeshStandardMaterial({ color: 0x4a3220, roughness: 1 });
     const bandM = new THREE.MeshStandardMaterial({ color: 0x2a2d33, roughness: 0.45, metalness: 0.7 });
-    for (const bx of [-0.38, 0.38]) {
-      const band = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.58, 0.72), bandM);
-      band.position.set(bx, 0.3, 0); grp.add(band);
+    const brassM = new THREE.MeshStandardMaterial({ color: 0xd8a437, roughness: 0.35, metalness: 0.6 });
+    const base = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.58, 0.7), woodM);
+    base.position.y = 0.32; base.castShadow = true; grp.add(base);
+    const plinth = new THREE.Mesh(new THREE.BoxGeometry(1.14, 0.08, 0.74), darkM);
+    plinth.position.y = 0.06; grp.add(plinth);
+    for (const sx of [-0.28, 0.28]) { // plank seams on the front face
+      const seam = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.5, 0.02), darkM);
+      seam.position.set(sx, 0.32, 0.36); grp.add(seam);
     }
-    const latch = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.05), MATS.gold);
-    latch.position.set(0, 0.62, 0.37); grp.add(latch);
+    // Hinged lid group: origin at the BACK edge (0, 0.61, -0.35),
+    // children shifted +0.35 in z so closed geometry is unchanged.
+    // The brass latch + keyhole live in the lid group at the front
+    // edge, so they travel with the lid when it swings open.
+    const lid = new THREE.Group();
+    lid.position.set(0, 0.61, -0.35);
+    const lidSlab = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.10, 0.7), woodM);
+    lidSlab.position.set(0, 0.05, 0.35); lidSlab.castShadow = true; lid.add(lidSlab);
+    const arch = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 1.1, 12, 1, false, 0, Math.PI), woodM);
+    arch.rotation.z = Math.PI / 2; arch.position.set(0, 0.10, 0.35); arch.castShadow = true; lid.add(arch);
+    for (const bx of [-0.38, 0.38]) {
+      const band = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.24, 0.72), bandM);
+      band.position.set(bx, 0.10, 0.35); lid.add(band);
+    }
+    const latch = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.14, 0.05), brassM);
+    latch.position.set(0, 0.01, 0.72); lid.add(latch);
+    const keyhole = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.07, 0.02), darkM);
+    keyhole.position.set(0, -0.01, 0.75); lid.add(keyhole);
+    grp.add(lid);
+    grp.userData.lid = lid;
+    for (const bx of [-0.38, 0.38]) { // body bands
+      const band = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.58, 0.72), bandM);
+      band.position.set(bx, 0.32, 0); grp.add(band);
+    }
+    for (const cx of [-0.52, 0.52]) for (const cy of [0.16, 0.52]) { // corner protectors
+      const corner = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.10, 0.74), bandM);
+      corner.position.set(cx, cy, 0); grp.add(corner);
+    }
     if (rand() < 0.35) {
       const crate = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.55, 0.55), pick(MATS.wood, rand));
       crate.position.set(0.95, 0.28, 0.3); crate.rotation.y = rand() * 1.2; crate.castShadow = true; grp.add(crate);
@@ -607,7 +597,6 @@ export function buildWorld(scene, seed) {
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
-    if (inCaveCarve(x, z, seed, 1)) continue;
     const b = biomeAt(x, z, seed);
     if (b === 'desert' || b === 'snowy') continue;
     dummy.position.set(x, h + 0.2, z);
@@ -637,7 +626,6 @@ export function buildWorld(scene, seed) {
     else { x = (rand() - 0.5) * (SIZE - 20); z = (rand() - 0.5) * (SIZE - 20); }
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
-    if (inCaveCarve(x, z, seed, 1)) continue;
     const b = biomeAt(x, z, seed);
     if (b === 'snowy' || b === 'caved') continue;
     dummy.position.set(x, h + 0.12, z);
@@ -664,7 +652,6 @@ export function buildWorld(scene, seed) {
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
-    if (inCaveCarve(x, z, seed, 1)) continue;
     if (biomeAt(x, z, seed) !== 'plains') continue;
     dummy.position.set(x, h + 0.32, z);
     dummy.rotation.set(0, 0, 0); dummy.scale.setScalar(0.8 + rand() * 0.6);
@@ -693,7 +680,6 @@ export function buildWorld(scene, seed) {
     else { x = (rand() - 0.5) * (SIZE - 20); z = (rand() - 0.5) * (SIZE - 20); }
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
-    if (inCaveCarve(x, z, seed, 1)) continue;
     const b = biomeAt(x, z, seed);
     dummy.position.set(x, h + 0.05, z);
     dummy.rotation.set(rand() * 0.8, rand() * Math.PI * 2, rand() * 0.8);
@@ -718,7 +704,6 @@ export function buildWorld(scene, seed) {
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
-    if (inCaveCarve(x, z, seed, 1)) continue;
     const b = biomeAt(x, z, seed);
     if (b === 'snowy' || b === 'caved') continue;
     if (slopeAt(x, z, seed) > 0.35) continue; // flat ground only, so discs don't clip into slopes
@@ -731,131 +716,6 @@ export function buildWorld(scene, seed) {
     disc.position.set(x, h + 0.05, z);
     disc.receiveShadow = true;
     scene.add(disc);
-  }
-
-  // ---- Caves: entrances CARVED into the hillside (Minecraft-like) ----
-  // The terrain itself is notched by planCaveCarves + carveDelta (see
-  // heightAt): a tunnel-shaped depression cut into a caved-mountain
-  // slope, deepest inside the hill and fading to nothing at the mouth.
-  // What you see is NOT a freestanding box: the slope opens into a
-  // notch, irregular rocks rim the mouth and line the tunnel, flat rock
-  // slabs bridge overhead, and the tunnel floor IS the carved ground —
-  // so walking in follows the terrain instead of a box floor.
-  // Cave sites are planned on their own RNG stream (deterministic per
-  // seed) so tree/rock/chest placement never shifts.
-  function planCaveCarves(seed) {
-    const crand = mulberry((seed ^ 0x9E3779B9) >>> 0);
-    const spawn = findSpawn(seed);
-    const carves = [];
-    const trySite = (x, z) => {
-      if (carves.length >= 4) return false;
-      const mh = baseHeightAt(x, z, seed);
-      if (mh < 12) return false;
-      const r = regionAt(x, z, seed);
-      const caveN = fbm(x * 0.006 + 300, z * 0.006, seed);
-      const b = cavedHotspot(x, z, seed, mh) ? 'caved' : biomeFrom(mh, r, caveN);
-      if (b !== 'caved') return false;
-      if (Math.hypot(x - spawn.x, z - spawn.z) < 170) return false;
-      if (carves.some((c) => Math.hypot(c.mx - x, c.mz - z) < 311)) return false;
-      // Uphill direction = into the hill; the mouth faces downhill.
-      const gx = baseHeightAt(x + 2, z, seed) - baseHeightAt(x - 2, z, seed);
-      const gz = baseHeightAt(x, z + 2, seed) - baseHeightAt(x, z - 2, seed);
-      const gl = Math.hypot(gx, gz) || 1;
-      const dx = gx / gl, dz = gz / gl;
-      const frontH = baseHeightAt(x - dx * 3, z - dz * 3, seed);
-      const backH = baseHeightAt(x + dx * 8, z + dz * 8, seed);
-      const slopeAlong = (backH - frontH) / 11;
-      if (slopeAlong < 0.22 || slopeAlong > 0.95) return false;
-      carves.push({ mx: x, mz: z, dx, dz, len: 8, halfW: 2.0, mouthH: mh });
-      return true;
-    };
-    for (let i = 0; i < 500 && carves.length < 4; i++) {
-      trySite((crand() - 0.5) * 1980, (crand() - 0.5) * 1980);
-    }
-    if (carves.length < 4) {
-      const scored = [];
-      for (let x = -960; x <= 960; x += 57) for (let z = -960; z <= 960; z += 57) {
-        const h = baseHeightAt(x, z, seed);
-        const caveN = fbm(x * 0.006 + 300, z * 0.006, seed);
-        if (h > 12 && caveN > 0.50) scored.push({ x, z, s: caveN + h / 100 });
-      }
-      scored.sort((a, b) => b.s - a.s);
-      for (const c of scored) {
-        if (carves.length >= 4) break;
-        trySite(c.x, c.z);
-      }
-    }
-    return carves;
-  }
-  const caves = [];
-  const caveDark = new THREE.MeshStandardMaterial({ color: 0x1a1712, roughness: 1, side: THREE.DoubleSide });
-  const caveRock = new THREE.MeshStandardMaterial({ color: 0x6e6a60, roughness: 1, side: THREE.DoubleSide });
-  {
-    const carves = caveCarvesBySeed.get(seed >>> 0) || [];
-    carves.forEach((c, ci) => {
-      const crand = mulberry((seed ^ ((ci + 1) * 2654435761)) >>> 0);
-      // Group origin at the mouth, local +z pointing INTO the hill.
-      const g = new THREE.Group();
-      g.position.set(c.mx, c.mouthH, c.mz);
-      g.rotation.y = Math.atan2(c.dx, c.dz);
-      // Dark tunnel floor, tilted to follow the carved descent.
-      const floor = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.12, c.len + 1.5), caveDark);
-      floor.position.set(0, -0.12 * (c.len / 2) + 0.06, c.len / 2);
-      floor.rotation.x = Math.atan(0.12);
-      floor.receiveShadow = true; g.add(floor);
-      // Irregular rock walls lining the tunnel (tilted slabs, not boxes).
-      for (let u = 1; u <= c.len; u += 1.6) {
-        for (const sx of [-1.9, 1.9]) {
-          const wall = new THREE.Mesh(jitteredRockGeo(0.9 + crand() * 0.4, crand), pick(MATS.stone, crand));
-          wall.scale.set(0.55, 1.5, 1.3);
-          wall.position.set(sx, -0.12 * u + 1.0, u);
-          wall.rotation.set((crand() - 0.5) * 0.5, crand() * 3, (crand() - 0.5) * 0.5);
-          wall.castShadow = true; g.add(wall);
-        }
-      }
-      // Flat rock slabs bridging overhead — ends buried in the carve
-      // walls, so they read as natural overhang, not a roof slab.
-      for (const u of [2.5, 4.5, 6.5]) {
-        const slab = new THREE.Mesh(jitteredRockGeo(1.4, crand), pick(MATS.stone, crand));
-        slab.scale.set(2.4, 0.35, 1.3);
-        slab.position.set(0, -0.12 * u + 2.7, u);
-        slab.rotation.set((crand() - 0.5) * 0.2, crand() * 0.4, (crand() - 0.5) * 0.2);
-        slab.castShadow = true; g.add(slab);
-      }
-      // Back of the tunnel: dark wall + rock cluster.
-      const back = new THREE.Mesh(new THREE.BoxGeometry(3.8, 2.8, 0.4), new THREE.MeshStandardMaterial({ color: 0x0a0908, roughness: 1, side: THREE.DoubleSide }));
-      back.position.set(0, -0.12 * c.len + 1.4, c.len + 0.2); g.add(back);
-      for (let i = 0; i < 3; i++) {
-        const rock = new THREE.Mesh(jitteredRockGeo(0.7 + crand() * 0.4, crand), pick(MATS.stone, crand));
-        rock.position.set((crand() - 0.5) * 2.4, -0.12 * c.len + 0.4, c.len + 0.4);
-        rock.castShadow = true; g.add(rock);
-      }
-      // Mouth rim: a ragged arch of rocks following the carved surface.
-      for (let v = -2.4; v <= 2.41; v += 0.8) {
-        const wx = c.mx - c.dz * v - c.dx * 0.3, wz = c.mz + c.dx * v - c.dz * 0.3;
-        const rim = new THREE.Mesh(jitteredRockGeo(0.55 + crand() * 0.35, crand), pick(MATS.stone, crand));
-        // Local coords: local x = -v, local z = u = -0.3; y from the
-        // carved surface so the rim hugs the slope, not floats over it.
-        rim.position.set(-v, heightAt(wx, wz, seed) - c.mouthH + 0.25, -0.3);
-        rim.rotation.set(crand() * 0.6, crand() * 3, crand() * 0.6);
-        rim.castShadow = true; g.add(rim);
-      }
-      // Dim warm light + iron ore inside, the reason to go in.
-      const lamp = new THREE.PointLight(0xffb37a, 30, 16, 1.8);
-      lamp.position.set(0, -0.12 * 4 + 2.0, 4); g.add(lamp);
-      for (let i = 0; i < 3; i++) {
-        const ore = new THREE.Mesh(jitteredRockGeo(0.4 + crand() * 0.2, crand), MATS.iron);
-        const u = 3.5 + crand() * 3;
-        ore.position.set((crand() - 0.5) * 1.6, -0.12 * u + 0.3, u);
-        ore.castShadow = true; g.add(ore);
-      }
-      scene.add(g);
-      // Facing = mouth-outward (downhill), matching game.js groundY
-      // local axes: local +z points out of the mouth, -z into the hill.
-      const facing = Math.atan2(-c.dx, -c.dz);
-      caves.push({ x: c.mx, z: c.mz, h: c.mouthH, group: g, facing, floorY: c.mouthH, slope: -0.12, len: c.len });
-      lantern(scene, c.mx - c.dx * 3, c.mz - c.dz * 3, seed);
-    });
   }
 
   // Gold infinite bench (unbreakable, unmovable) near spawn
@@ -909,5 +769,5 @@ export function buildWorld(scene, seed) {
   // also removes those interactions until Liam asks for one).
   // A lantern by the gold bench stays: it marks spawn, not a shop.
 
-  return { spawn, trees, rocks, groundStones, chests, interactables, caves, size: SIZE };
+  return { spawn, trees, rocks, groundStones, chests, interactables, size: SIZE };
 }

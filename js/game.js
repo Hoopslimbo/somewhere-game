@@ -379,6 +379,7 @@ function bindInput() {
     if (!closer) return;
     const panel = closer.closest('.shop-panel, .inv-panel');
     if (panel) panel.classList.add('hidden');
+    closeOpenChestLid();
     requestGameLock();
   });
   $('btn-pause').onclick = () => openPause();
@@ -498,6 +499,7 @@ function loop() {
   updateCrops(dt);
   updateDrops(dt);
   updateCarsVisual(dt);
+  updateLidAnims();
   updateHUDDynamic();
   // Sun follows player for shadows
   const sun = scene.userData.sun;
@@ -538,28 +540,9 @@ function updateDayNight() {
 }
 function groundY(x, z, yHint) {
   const h = heightAt(x, z, W.seed);
-  // Cave floors: the terrain IS carved now (a tunnel notch in the
-  // hillside), so heightAt already returns the tunnel floor inside a
-  // cave. This branch is a safety net for the chamber: it must only
-  // apply when the caller is actually below the hillside surface
-  // (walking inside) — otherwise a player walking on TOP of the tunnel
-  // roof would snap down through it (the phase-through bug). Callers
-  // at ground level (drops, placement) pass no hint and get the old
-  // floor behavior; the player/car pass their current height.
-  // Local axes: +z points OUT of the mouth, -z runs into the hill for
-  // c.len units; the floor descends 0.12 per unit into the hill.
-  if (world && world.caves) {
-    for (const c of world.caves) {
-      const dx = x - c.x, dz = z - c.z;
-      const lx = dx * Math.cos(c.facing) - dz * Math.sin(c.facing);
-      const lz = dx * Math.sin(c.facing) + dz * Math.cos(c.facing);
-      if (Math.abs(lx) < 2.1 && lz > -(c.len || 2.8) && lz < 2.9) {
-        if (yHint === undefined || yHint < h - 1.2) {
-          return Math.max(c.floorY - lz * (c.slope || 0), -0.35);
-        }
-      }
-    }
-  }
+  // Caves REMOVED (2026-10-28): mountains are solid, so ground is just
+  // the heightmap. yHint is kept in the signature for callers that
+  // still pass it, but no longer changes anything.
   return Math.max(h, -0.35); // wade in shallows; deep water just floors out in v1
 }
 
@@ -1038,6 +1021,7 @@ function doInteract(source) {
     if (source === 'key' && shopOpened && shopOpened.by === 'key') {
       $('shop-panel').classList.add('hidden');
       shopOpened = null;
+      closeOpenChestLid();
       requestGameLock();
     }
     return;
@@ -1437,28 +1421,41 @@ function buildPieceMesh(itemId, colorOverride) {
       add(new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.10, 0.04), new THREE.MeshStandardMaterial({ color: gc, roughness: 0.6 })), gx, 0.82, 0.37);
     add(new THREE.Mesh(new THREE.BoxGeometry(0.70, 0.06, 0.72), darkM), 0, 1.72, 0); // cap drip rail
   } else if (itemId === 'chest') {
-    // A proper storage chest: planked body, metal bands, hinges, latch,
-    // and a slightly domed lid — same 1.1-wide footprint as before.
+    // REDESIGNED 2026-10-28: deep-wood planked body with seam grooves,
+    // a true arched lid (half-barrel top), steel bands, brass latch
+    // with keyhole, corner protectors — same 1.1-wide footprint and
+    // the same look as world loot chests.
     const woodM = matTex(0x9a6a35, false, grainTex());
-    const bandM = new THREE.MeshStandardMaterial({ color: 0x6a707a, roughness: 0.45, metalness: 0.7 });
-    const lidM = matFor(0x8a5a2b);
+    const darkM = new THREE.MeshStandardMaterial({ color: 0x4a3220, roughness: 1 });
+    const bandM = new THREE.MeshStandardMaterial({ color: 0x2a2d33, roughness: 0.45, metalness: 0.7 });
+    const brassM = new THREE.MeshStandardMaterial({ color: 0xd8a437, roughness: 0.35, metalness: 0.6 });
     add(new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.58, 0.7), woodM), 0, 0.32, 0);
-    add(new THREE.Mesh(new THREE.BoxGeometry(1.14, 0.08, 0.74), woodM), 0, 0.06, 0); // base plinth
-    add(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.58, 0.72), bandM), -0.38, 0.32, 0); // bands
-    add(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.58, 0.72), bandM), 0.38, 0.32, 0);
-    add(new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.10, 0.7), lidM), 0, 0.66, 0); // lid base
-    add(new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.14, 0.6), lidM), 0, 0.76, 0); // domed lid top
-    add(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.24, 0.72), bandM), -0.38, 0.70, 0);
-    add(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.24, 0.72), bandM), 0.38, 0.70, 0);
-    add(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.05), new THREE.MeshStandardMaterial({ color: 0xf5c542, metalness: 0.5, roughness: 0.4 })), 0, 0.62, 0.37); // latch
-    add(new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.08, 0.04), bandM), -0.30, 0.62, -0.37); // hinges
-    add(new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.08, 0.04), bandM), 0.30, 0.62, -0.37);
-    for (const cx of [-0.52, 0.52]) for (const cy of [0.14, 0.74]) { // corner protectors
-      add(new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.10, 0.74), bandM), cx, cy, 0);
+    add(new THREE.Mesh(new THREE.BoxGeometry(1.14, 0.08, 0.74), darkM), 0, 0.06, 0); // base plinth
+    for (const sx of [-0.28, 0.28]) // plank seams on the front face
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.5, 0.02), darkM), sx, 0.32, 0.36);
+    for (const bx of [-0.38, 0.38])
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.58, 0.72), bandM), bx, 0.32, 0); // body bands
+    // Hinged lid subgroup (same convention as loot chests): origin at
+    // the back edge, children shifted +0.35 in z so closed geometry is
+    // unchanged; latch + keyhole travel with the lid.
+    const lid = new THREE.Group();
+    lid.position.set(0, 0.61, -0.35);
+    const lidSlab = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.10, 0.7), woodM);
+    lidSlab.position.set(0, 0.05, 0.35); lidSlab.castShadow = true; lid.add(lidSlab);
+    const arch = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 1.1, 12, 1, false, 0, Math.PI), woodM);
+    arch.rotation.z = Math.PI / 2; arch.position.set(0, 0.10, 0.35); arch.castShadow = true; lid.add(arch);
+    for (const bx of [-0.38, 0.38]) {
+      const band = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.24, 0.72), bandM);
+      band.position.set(bx, 0.09, 0.35); band.castShadow = true; lid.add(band);
     }
-    for (const sx of [-0.57, 0.57]) { // rope handles on the sides
-      const rope = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.025, 6, 12, Math.PI), new THREE.MeshStandardMaterial({ color: 0xc8b490, roughness: 1 }));
-      rope.rotation.z = sx < 0 ? -Math.PI / 2 : Math.PI / 2; add(rope, sx, 0.32, 0);
+    const latch = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.14, 0.05), brassM);
+    latch.position.set(0, 0.01, 0.72); lid.add(latch);
+    const keyhole = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.07, 0.02), darkM);
+    keyhole.position.set(0, -0.01, 0.75); lid.add(keyhole);
+    g.add(lid);
+    g.userData.lid = lid;
+    for (const cx of [-0.52, 0.52]) for (const cy of [0.16, 0.52]) { // corner protectors
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.10, 0.74), bandM), cx, cy, 0);
     }
   } else if (itemId === 'house') {
     add(new THREE.Mesh(new THREE.BoxGeometry(5, 3, 4), matFor(0xe8ddc8)), 0, 1.5, 0);
@@ -1844,67 +1841,135 @@ function buyLand() {
   chatMsg('System', 'Land bought! Your House Key is in a permanent slot (press 9). Place a House Kit inside the red line.', true);
   updateHUD(); saveGame();
 }
-// ---------- Loot chest container ----------
-// A found chest opens a real container UI: look through its contents,
-// take stacks into your inventory (Take / Take All), or put your own
-// items back in. Contents are generated from the chest's loot table on
-// first open and persist per chest in the world save.
+// ---------- Chest container (Minecraft-style) ----------
+// One grid UI for BOTH loot chests and player-built storage chests:
+// a big open chest grid on top, your inventory below, and items move
+// by DRAG AND DROP either way. Take All stays as a convenience button.
+// Chest contents are a fixed 40-slot array (null = empty) so a stack
+// keeps its grid position; old compact saves are padded on open.
+// Loot is still generated from the chest's loot table on first open
+// and persists per chest (by exact x/z) in the world save.
+const CHEST_SLOTS = 40;
+function normChest(contents) {
+  const arr = (contents || []).slice(0, CHEST_SLOTS);
+  while (arr.length < CHEST_SLOTS) arr.push(null);
+  return arr;
+}
+// ---------- Chest lid hinge animation ----------
+// Lids are hinged at their back edge (lid group origin). Opening swings
+// the lid up and back around its local X axis (~-1.9 rad, just past
+// vertical); closing swings it back flush. Both directions animate
+// over ~0.35s eased — never a snap, never a lift, never a sideways tilt.
+const LID_OPEN_ANGLE = -1.9;
+let LID_ANIM_MS = 350;
+const lidAnims = [];
+function animateLid(lid, open) {
+  if (!lid) return;
+  for (let i = lidAnims.length - 1; i >= 0; i--) if (lidAnims[i].lid === lid) lidAnims.splice(i, 1);
+  lidAnims.push({ lid, from: lid.rotation.x, to: open ? LID_OPEN_ANGLE : 0, start: performance.now() });
+}
+function updateLidAnims() {
+  if (!lidAnims.length) return;
+  const now = performance.now();
+  for (let i = lidAnims.length - 1; i >= 0; i--) {
+    const a = lidAnims[i];
+    const p = Math.min(1, (now - a.start) / LID_ANIM_MS);
+    const e = 1 - Math.pow(1 - p, 3); // easeOutCubic
+    a.lid.rotation.x = a.from + (a.to - a.from) * e;
+    if (p >= 1) lidAnims.splice(i, 1);
+  }
+}
+// The chest whose panel is currently open (for lid-close on any close
+// path). Set on open, cleared on close.
+let openChestLid = null;
+function closeOpenChestLid() {
+  if (openChestLid) { animateLid(openChestLid, false); openChestLid = null; }
+}
 function openLootChest(c, source) {
-  openMousePanel(source);
   if (!c.contents) {
     c.contents = c.loot.map((l) => ({ ...l }));
     c.opened = true;
-    c.group.children[1].position.y = 1.1; c.group.children[1].rotation.z = -0.7;
     saveGame();
   }
+  c.contents = normChest(c.contents);
+  openChestLid = c.group.userData.lid || null;
+  animateLid(openChestLid, true);
+  openChestPanel('Loot Chest', c.contents, source);
+}
+function openStorage(piece, source) {
+  piece.contents = normChest(piece.contents);
+  openChestLid = (piece.mesh && piece.mesh.userData.lid) || null;
+  animateLid(openChestLid, true);
+  openChestPanel('Storage chest (40 slots)', piece.contents, source);
+}
+function openChestPanel(title, chest, source) {
+  openMousePanel(source);
+  $('inv-panel').classList.add('hidden'); // chest UI carries its own inventory grid
   const panel = $('shop-panel');
   panel.classList.remove('hidden');
+  const arrOf = (where) => where === 'chest' ? chest : (where === 'hot' ? P.hotbar : P.inv);
+  const mkSlotEl = (stack, where, idx) => {
+    const d = document.createElement('div');
+    d.className = 'slot' + ((where === 'hot' && selSlot === idx) ? ' sel' : '');
+    if (stack) {
+      const def = ITEMS[stack.id];
+      d.title = def.name;
+      d.innerHTML = `<span class="ic">${itemIcon(stack.id)}</span><span class="lbl">${def.name}</span>${stack.n > 1 ? `<span class="cnt">${stack.n}</span>` : ''}` +
+        (stack.dur && def.maxDur ? `<span class="dur"><i style="width:${stack.dur / def.maxDur * 100}%"></i></span>` : '');
+    } else {
+      d.innerHTML = `<span class="lbl">Empty</span>`;
+    }
+    d.draggable = true;
+    d.dataset.where = where; d.dataset.idx = idx;
+    d.ondragstart = (e) => {
+      dragSrc = { where, idx };
+      try { e.dataTransfer.setData('text/plain', where + ':' + idx); } catch { /* ignore */ }
+      e.dataTransfer.effectAllowed = 'move';
+    };
+    d.ondragover = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; d.classList.add('drag-over'); };
+    d.ondragleave = () => d.classList.remove('drag-over');
+    d.ondrop = (e) => {
+      e.preventDefault();
+      d.classList.remove('drag-over');
+      if (!dragSrc || (dragSrc.where === where && dragSrc.idx === idx)) { dragSrc = null; return; }
+      const a = arrOf(dragSrc.where), b = arrOf(where);
+      const s = a[dragSrc.idx];
+      if (s) {
+        const t = b[idx];
+        // Coins are currency, not an inventory stack: dragging them to
+        // your side converts them to money (same as Take does).
+        if ((where === 'hot' || where === 'inv') && s.id === 'money') { P.money += s.n; a[dragSrc.idx] = null; }
+        else if (!t) { b[idx] = s; a[dragSrc.idx] = null; }
+        else if (t.id === s.id && !ITEMS[s.id].tool) { t.n += s.n; a[dragSrc.idx] = null; } // merge stacks
+        else { a[dragSrc.idx] = t; b[idx] = s; } // swap
+      }
+      dragSrc = null;
+      dragDroppedAt = performance.now();
+      render(); updateHUD(); saveGame();
+    };
+    d.ondragend = () => { dragSrc = null; dragDroppedAt = performance.now(); };
+    return d;
+  };
   const render = () => {
-    panel.innerHTML = `<h3>Loot Chest</h3>
-      <div>${c.contents.length ? c.contents.map((s, i) => `<div class="craft-row"><span><span class="ic sm">${itemIcon(s.id)}</span> ${ITEMS[s.id].name} ×${s.n}</span><button class="btn small" data-take="${i}">Take</button></div>`).join('') : '<p class="fine">Empty. You can put items back in here.</p>'}</div>
-      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn small" id="take-all">Take All</button><button class="btn small" id="deposit-loot">Deposit Selected Item</button><button class="btn small ghost panel-close">Close</button></div>`;
-    panel.querySelectorAll('[data-take]').forEach((b) => b.onclick = () => {
-      const s = c.contents[+b.dataset.take];
-      if (addItem(s.id, s.n)) { c.contents.splice(+b.dataset.take, 1); render(); updateHUD(); saveGame(); }
-    });
-    $('take-all').onclick = () => {
-      for (let i = c.contents.length - 1; i >= 0; i--) {
-        if (addItem(c.contents[i].id, c.contents[i].n)) c.contents.splice(i, 1);
+    panel.innerHTML = `<div class="chest-ui"><h3>${title}</h3>
+      <div class="chest-grid" id="chest-grid"></div>
+      <p class="fine">Drag items between the chest and your inventory.</p>
+      <h4>Your inventory</h4>
+      <div class="player-grid" id="chest-player-grid"></div>
+      <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn small" id="chest-take-all">Take All</button><button class="btn small ghost panel-close">Close</button></div></div>`;
+    const cg = $('chest-grid');
+    for (let i = 0; i < CHEST_SLOTS; i++) cg.appendChild(mkSlotEl(chest[i] || null, 'chest', i));
+    const pg = $('chest-player-grid');
+    for (let i = 0; i < 7; i++) pg.appendChild(mkSlotEl(P.hotbar[i] || null, 'hot', i));
+    for (let i = 0; i < invCap(); i++) pg.appendChild(mkSlotEl(P.inv[i] || null, 'inv', i));
+    $('chest-take-all').onclick = () => {
+      for (let i = 0; i < chest.length; i++) {
+        const s = chest[i];
+        if (!s) continue;
+        if (addItem(s.id, s.n)) chest[i] = null;
         else break; // inventory full — leave the rest in the chest
       }
       render(); updateHUD(); saveGame();
-    };
-    $('deposit-loot').onclick = () => {
-      const sel = selectedItem();
-      if (!sel || selSlot >= 7) { toast('Select a hotbar item to deposit.'); return; }
-      if (c.contents.length >= 40) { toast('Chest is full (40 slots).'); return; }
-      c.contents.push({ ...sel });
-      P.hotbar[selSlot] = null; P.hotbar = P.hotbar.filter(Boolean);
-      render(); updateHUD(); saveGame();
-    };
-  };
-  render();
-}
-
-function openStorage(piece, source) {
-  openMousePanel(source);
-  const panel = $('shop-panel');
-  panel.classList.remove('hidden');
-  const render = () => {
-    panel.innerHTML = `<h3>Storage chest (40 slots)</h3>
-      <div>${piece.contents.length ? piece.contents.map((s, i) => `<div class="craft-row"><span><span class="ic sm">${itemIcon(s.id)}</span> ${ITEMS[s.id].name} ×${s.n}</span><button class="btn small" data-take="${i}">Take</button></div>`).join('') : '<p class="fine">Empty. Deposit your selected hotbar item.</p>'}</div>
-      <div style="margin-top:10px"><button class="btn small" id="deposit">Deposit selected item</button> <button class="btn small ghost panel-close">Close</button></div>`;
-    panel.querySelectorAll('[data-take]').forEach((b) => b.onclick = () => {
-      const s = piece.contents[+b.dataset.take];
-      if (addItem(s.id, s.n)) { piece.contents.splice(+b.dataset.take, 1); render(); updateHUD(); }
-    });
-    $('deposit').onclick = () => {
-      const sel = selectedItem();
-      if (!sel || selSlot >= 7) { toast('Select a hotbar item to deposit.'); return; }
-      if (piece.contents.length >= 40) { toast('Chest is full (40 slots).'); return; }
-      piece.contents.push({ ...sel });
-      P.hotbar[selSlot] = null; P.hotbar = P.hotbar.filter(Boolean);
-      render(); updateHUD();
     };
   };
   render();
@@ -1951,7 +2016,7 @@ function renderInvGrid() {
     d.draggable = true;
     d.dataset.kind = kind; d.dataset.idx = idx;
     d.ondragstart = (e) => {
-      dragSrc = { kind, idx };
+      dragSrc = { where: kind, idx };
       try { e.dataTransfer.setData('text/plain', kind + ':' + idx); } catch { /* ignore */ }
       e.dataTransfer.effectAllowed = 'move';
     };
@@ -1960,8 +2025,10 @@ function renderInvGrid() {
     d.ondrop = (e) => {
       e.preventDefault();
       d.classList.remove('drag-over');
-      if (!dragSrc || (dragSrc.kind === kind && dragSrc.idx === idx)) { dragSrc = null; return; }
-      const a = invArr(dragSrc.kind), b = invArr(kind);
+      // Chest-panel drags never land here (the chest UI handles its own
+      // drops); only inventory-internal drags reorder this grid.
+      if (!dragSrc || dragSrc.where === 'chest' || (dragSrc.where === kind && dragSrc.idx === idx)) { dragSrc = null; return; }
+      const a = invArr(dragSrc.where), b = invArr(kind);
       const tmp = a[dragSrc.idx];
       a[dragSrc.idx] = b[idx];
       b[idx] = tmp;
@@ -2055,6 +2122,7 @@ function openCraft(quick, opened) {
 }
 function closePanels() {
   stopHoldAction();
+  closeOpenChestLid();
   $('inv-panel').classList.add('hidden');
   $('shop-panel').classList.add('hidden');
   $('help-panel').classList.add('hidden');
@@ -2190,7 +2258,7 @@ function loadSave() {
     if (!c) continue;
     c.opened = !!sc.opened;
     c.contents = sc.contents || null;
-    if (c.opened) { c.group.children[1].position.y = 1.1; c.group.children[1].rotation.z = -0.7; }
+    // Lids start closed on load; opening the chest animates the hinge.
   }
 }
 
@@ -2240,6 +2308,8 @@ window.__debug = {
   get selSlot() { return selSlot; },
   doPrimary: () => onPrimaryAction(),
   doInteract: () => doInteract(),
+  openLoot: (c) => openLootChest(c, 'key'),
+  openStore: (p) => openStorage(p, 'key'),
   place: () => placeGhostPiece(),
   setBuild: (on) => setBuildMode(on),
   vehiclePanel: (m) => openVehiclePanel(m),
@@ -2249,6 +2319,10 @@ window.__debug = {
   setSwingDur: (v) => { swingDur = v; },
   swingAt: (msAgo) => { swingStart = performance.now() - msAgo; },
   closePause: () => closePause(),
+  // Debug-only lid-animation speed (headless verification: the live
+  // 350ms window is too short to catch mid-flight when software
+  // rendering makes frames sparse). No UI or gameplay effect.
+  setLidMs: (v) => { LID_ANIM_MS = v; },
   get sprinting() { return doubleTapSprint; },
   openPause: () => openPause(),
   openPauseSettings: () => openPauseSettings(),

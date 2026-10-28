@@ -319,21 +319,21 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
 #game-screen .chat-msg.sys b { color: var(--sky); }
 #game-screen #chat-input { background: rgba(10,15,32,.85); border-radius: 12px; }
 #game-screen .toast { background: rgba(10,15,32,.85); border: 1px solid rgba(255,255,255,.12); border-radius: 14px; clip-path: none; filter: none; box-shadow: 0 12px 30px rgba(0,0,0,.35); font-weight: 600; text-transform: none; letter-spacing: 0; }
-#game-screen .help-panel { background: rgba(10,15,32,.92); border: 1px solid rgba(255,255,255,.12); border-radius: 20px; clip-path: none; filter: none; box-shadow: 0 24px 64px rgba(0,0,0,.5); font-weight: 500; }
+#game-screen .help-panel { background: rgba(32,32,36,.94); border: 1px solid rgba(255,255,255,.12); border-radius: 20px; clip-path: none; filter: none; box-shadow: 0 24px 64px rgba(0,0,0,.5); font-weight: 500; }
 #game-screen .help-panel h3 { color: #fff; }
-#game-screen .slot { border-radius: 14px; border: 1px solid rgba(255,255,255,.22); background: rgba(10,15,32,.72); clip-path: none; filter: none; box-shadow: 0 8px 22px rgba(0,0,0,.30); backdrop-filter: blur(8px); }
-#game-screen .slot.sel { border-color: var(--sky-line); box-shadow: 0 0 0 3px rgba(142,201,255,.25), 0 8px 22px rgba(0,0,0,.30); transform: translateY(-4px); }
-#game-screen .slot.perm { border-style: dashed; border-color: rgba(142,201,255,.7); }
+#game-screen .slot { border-radius: 14px; border: 1px solid rgba(255,255,255,.22); background: rgba(58,58,64,.78); clip-path: none; filter: none; box-shadow: 0 8px 22px rgba(0,0,0,.30); backdrop-filter: blur(8px); }
+#game-screen .slot.sel { border-color: rgba(220,220,228,.85); box-shadow: 0 0 0 3px rgba(220,220,228,.25), 0 8px 22px rgba(0,0,0,.30); transform: translateY(-4px); }
+#game-screen .slot.perm { border-style: dashed; border-color: rgba(220,220,228,.7); }
 #game-screen .slot .cnt { color: #fff; font-weight: 700; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
-#game-screen .inv-panel { background: rgba(10,15,32,.92); border: 1px solid rgba(255,255,255,.12); border-radius: 20px; clip-path: none; filter: none; box-shadow: 0 24px 64px rgba(0,0,0,.5); backdrop-filter: blur(16px); }
+#game-screen .inv-panel { background: rgba(32,32,36,.94); border: 1px solid rgba(255,255,255,.12); border-radius: 20px; clip-path: none; filter: none; box-shadow: 0 24px 64px rgba(0,0,0,.5); backdrop-filter: blur(16px); }
 #game-screen .inv-head h3 { color: #fff; }
 #game-screen .craft-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,.22); border: none; border-radius: 999px; }
 #game-screen .craft-row { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.10); border-radius: 12px; clip-path: none; font-weight: 500; }
-#game-screen .build-bar { background: rgba(10,15,32,.75); border: 1px solid rgba(255,255,255,.12); border-radius: 16px; clip-path: none; filter: none; box-shadow: 0 12px 30px rgba(0,0,0,.35); backdrop-filter: blur(12px); }
+#game-screen .build-bar { background: rgba(32,32,36,.85); border: 1px solid rgba(255,255,255,.12); border-radius: 16px; clip-path: none; filter: none; box-shadow: 0 12px 30px rgba(0,0,0,.35); backdrop-filter: blur(12px); }
 #game-screen .build-bar button { border-radius: 10px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.07); clip-path: none; font-weight: 600; text-transform: none; letter-spacing: 0; }
 #game-screen .build-bar button:hover { filter: none; background: rgba(255,255,255,.13); }
-#game-screen .build-bar button.sel { background: var(--sky); color: #0b1226; border-color: transparent; }
-#game-screen .shop-panel { background: rgba(10,15,32,.92); border: 1px solid rgba(255,255,255,.12); border-radius: 20px; clip-path: none; filter: none; box-shadow: 0 24px 64px rgba(0,0,0,.5); backdrop-filter: blur(16px); }
+#game-screen .build-bar button.sel { background: #d7d7de; color: #141416; border-color: transparent; }
+#game-screen .shop-panel { background: rgba(32,32,36,.94); border: 1px solid rgba(255,255,255,.12); border-radius: 20px; clip-path: none; filter: none; box-shadow: 0 24px 64px rgba(0,0,0,.5); backdrop-filter: blur(16px); }
 #game-screen .shop-panel h3 { color: #fff; }
 
 /* ---------- Fix batch 2 ---------- */
@@ -390,6 +390,22 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
 .craft-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 10px; }
 /* Inventory drag-to-reorder affordances. */
 #game-screen .inv-grid .slot[draggable="true"] { cursor: grab; }
-#game-screen .inv-grid .slot.drag-over { border-color: var(--sky-line); box-shadow: 0 0 0 3px rgba(142,201,255,.35); }
+#game-screen .inv-grid .slot.drag-over { border-color: rgba(220,220,228,.85); box-shadow: 0 0 0 3px rgba(220,220,228,.35); }
+/* Minecraft-style chest UI: big chest grid on top, your inventory below. */
+.shop-panel:has(.chest-ui) { width: min(640px, 94vw); }
+.chest-ui h4 { margin: 14px 0 0; color: #fff; }
+.chest-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 7px; margin: 10px 0; }
+.chest-grid .slot { width: 100%; height: auto; min-height: 70px; padding: 6px 2px 10px; }
+.player-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 7px; margin: 10px 0; }
+.player-grid .slot { width: 100%; height: auto; min-height: 70px; padding: 6px 2px 10px; }
+#game-screen .chest-grid .slot[draggable="true"], #game-screen .player-grid .slot[draggable="true"] { cursor: grab; }
+#game-screen .chest-grid .slot.drag-over, #game-screen .player-grid .slot.drag-over { border-color: rgba(220,220,228,.85); box-shadow: 0 0 0 3px rgba(220,220,228,.35); }
+
+/* In-game menus: gray + dark gray scheme (no dark blue). Covers
+   inventory, workbench/craft, chest, shop, build bar, help, and the
+   pause dialogs — lobby UI and HUD accents are untouched. */
+#game-screen .dialog-card { background: rgba(32,32,36,.96); }
+#game-screen .shop-panel .btn, #game-screen .inv-panel .btn, #game-screen .dialog-card .btn { background: linear-gradient(180deg, #5c5c64, #3a3a40); border-color: rgba(255,255,255,.18); clip-path: none; border-radius: 12px; filter: none; text-transform: none; letter-spacing: 0; }
+#game-screen .shop-panel .btn.primary, #game-screen .inv-panel .btn.primary, #game-screen .dialog-card .btn.primary { background: #d7d7de; color: #141416; }
 /* Bedrock-style pause menu: full-width stacked buttons. */
 #game-screen .pause-card .pause-btn { width: 100%; text-align: center; }
