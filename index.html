@@ -58,8 +58,13 @@
       <span id="header-username"></span>
       <img id="header-pfp" class="mini-pfp" alt="">
     </div>
-    <button id="btn-friends" class="btn small">Friends</button>
   </header>
+
+  <!-- Circular friends button: sits just below the header bar, top right
+       (not inside the bar); toggles the slide-in friends panel, same as F. -->
+  <button id="btn-friends" class="friends-fab" title="Friends" aria-label="Friends">
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="9" cy="8" r="3.6"/><path d="M2.5 19.5c.4-3.4 3-5.5 6.5-5.5s6.1 2.1 6.5 5.5H2.5Z"/><circle cx="17.5" cy="9" r="2.7"/><path d="M16.2 14.6c2.7.3 4.8 1.9 5.3 4.9h-5.3v-4.9Z"/></svg>
+  </button>
 
   <div class="lobby-hero">
     <div class="lobby-center">
@@ -71,17 +76,34 @@
     </div>
   </div>
 
-  <!-- Friends slide-in panel: hidden by default; the Friends button
-       (top right) or F slides it in from the right edge, full height. -->
+  <!-- Friends slide-in panel: hidden by default; the circular Friends button
+       below the header bar, or F, slides it in from the right edge, full height. -->
   <aside class="friends-panel" id="friends-panel">
     <div class="friends-head">
       <h3>Friends</h3>
       <button id="btn-close-friends" class="btn small ghost" title="Close friends">✕</button>
     </div>
-    <div id="friends-list"></div>
-    <div class="add-friend">
-      <input id="friend-name" type="text" maxlength="15" placeholder="Add by username">
-      <button id="btn-add-friend" class="btn small">Add</button>
+    <!-- Normal friends view (default): search your own friends list, with
+         a square + button beside the search bar that opens the Add view. -->
+    <div id="friends-view">
+      <div class="friends-search-row">
+        <input id="friend-search" type="text" maxlength="15" placeholder="Search friends" aria-label="Search friends">
+        <button id="btn-add-view" class="btn-add-square" title="Add friend" aria-label="Add friend">+</button>
+      </div>
+      <div id="friends-list"></div>
+    </div>
+    <!-- Add view: search for a friend by username, back arrow returns to
+         the normal friends view. -->
+    <div id="friends-add-view" class="hidden">
+      <div class="friends-add-head">
+        <button id="btn-back-friends" class="btn small ghost" title="Back to friends">←</button>
+        <h3>Add friends</h3>
+      </div>
+      <div class="add-friend">
+        <input id="friend-name" type="text" maxlength="15" placeholder="Search by username">
+        <button id="btn-add-friend" class="btn small">Add</button>
+      </div>
+      <p class="fine">Search for a friend by username to add them.</p>
     </div>
   </aside>
 

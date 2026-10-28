@@ -672,10 +672,21 @@ $('btn-play').onclick = () => {
 // F still eats (game.js owns that binding and is out of scope for
 // this batch), and F never fires while typing in an input.
 let friendsOpen = false;
+// Two views inside the same panel: 'normal' (search your own friends +
+// square + button) and 'add' (search by username to add). Opening the
+// panel always lands on the normal view; closing resets to it too.
+let friendsView = 'normal';
+let friendSearchQuery = '';
+function setFriendsView(view) {
+  friendsView = view;
+  $('friends-view').classList.toggle('hidden', view !== 'normal');
+  $('friends-add-view').classList.toggle('hidden', view !== 'add');
+  if (view === 'normal') renderFriends();
+}
 function setFriendsOpen(open) {
   friendsOpen = open;
   $('lobby-screen').classList.toggle('friends-open', open);
-  if (open) renderFriends();
+  if (open) { friendSearchQuery = ''; if ($('friend-search')) $('friend-search').value = ''; setFriendsView('normal'); }
 }
 $('btn-friends').onclick = () => setFriendsOpen(!friendsOpen);
 $('btn-close-friends').onclick = () => setFriendsOpen(false);
@@ -688,13 +699,25 @@ document.addEventListener('keydown', (e) => {
 });
 function renderFriends() {
   $('friends-list').innerHTML = '';
+  // Normal-view search filters your OWN friends only (case-insensitive
+  // substring on username); it never adds anyone.
+  const q = friendSearchQuery.trim().toLowerCase();
+  const shown = q ? S.friends.filter((f) => f.name.toLowerCase().includes(q)) : S.friends;
   if (!S.friends.length) {
     const empty = document.createElement('p');
     empty.className = 'fine';
-    empty.textContent = 'No friends yet — add someone by username below.';
+    empty.textContent = 'No friends yet — tap + to add someone by username.';
     $('friends-list').appendChild(empty);
+    return;
   }
-  for (const f of S.friends) {
+  if (!shown.length) {
+    const none = document.createElement('p');
+    none.className = 'fine';
+    none.textContent = 'No friends match that search.';
+    $('friends-list').appendChild(none);
+    return;
+  }
+  for (const f of shown) {
     const row = document.createElement('div');
     row.className = 'friend-row';
     row.innerHTML = `<span class="dot ${f.online ? '' : 'off'}"></span><span class="f-name">${f.name}</span>` +
@@ -705,13 +728,20 @@ function renderFriends() {
     $('friends-list').appendChild(row);
   }
 }
+$('friend-search').addEventListener('input', (e) => {
+  friendSearchQuery = e.target.value;
+  renderFriends();
+});
+$('btn-add-view').onclick = () => setFriendsView('add');
+$('btn-back-friends').onclick = () => setFriendsView('normal');
 $('btn-add-friend').onclick = () => {
   const name = $('friend-name').value.trim();
   if (!name) return;
   S.friends.push({ name, online: false });
   save('somewhere_friends', S.friends);
   $('friend-name').value = '';
-  renderFriends();
+  // Back to the normal view so the new friend is visible in the list.
+  setFriendsView('normal');
 };
 function renderInvites() {
   const list = $('invites-list');
