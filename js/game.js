@@ -155,7 +155,7 @@ window.startGame = function (worldDef) {
       const mesh = buildPieceMesh(itemId);
       mesh.position.set(x, y, z);
       scene.add(mesh);
-      placed.push({ itemId, x, z, y, rotY: 0, color: paintColor, mesh, contents: itemId === 'chest' ? [] : undefined });
+      placed.push({ itemId, x, z, y, rotY: 0, color: (itemId.startsWith('wall_') ? PIECE_COLORS[itemId.slice(5)] : null) || paintColor, mesh, contents: itemId === 'chest' ? [] : undefined });
     }
   }
   buildHUDStatic();
@@ -1201,7 +1201,10 @@ function brushedTex() {
 
 function buildPieceMesh(itemId, colorOverride) {
   const g = new THREE.Group();
-  const pc = colorOverride || paintColor;
+  // No color selection for now (dye/paint items come later): walls use
+  // their natural material color from PIECE_COLORS; other pieces keep
+  // their existing default appearance.
+  const pc = colorOverride || (itemId.startsWith('wall_') ? PIECE_COLORS[itemId.slice(5)] : null) || paintColor;
   const matFor = (base, steel) => {
     const pcc = new THREE.Color(pc), bc = new THREE.Color(base);
     return new THREE.MeshStandardMaterial({ color: steel ? pcc : bc.lerp(pcc, 0.45), roughness: 0.9 });
@@ -1547,15 +1550,6 @@ function renderBuildBar() {
     b.onclick = () => { buildSel = s.id; renderBuildBar(); };
     bar.appendChild(b);
   }
-  const paints = ['#8a5a2b', '#e5484d', '#57b6ff', '#46a758', '#f5c542', '#e8e8e8', '#1d1a16', '#d6409f'];
-  for (const c of paints) {
-    const b = document.createElement('button');
-    b.style.background = c; b.style.width = '26px'; b.style.padding = '7px 0';
-    b.title = 'Paint ' + c;
-    if (c === paintColor) b.style.boxShadow = '0 0 0 2px #fff';
-    b.onclick = () => { paintColor = c; renderBuildBar(); };
-    bar.appendChild(b);
-  }
   if (!seen.size) bar.innerHTML = '<span style="padding:7px">No building pieces — craft some at the gold bench first.</span>';
 }
 function ghostAim() {
@@ -1587,12 +1581,15 @@ function updateGhost() {
     if (ghost) scene.remove(ghost);
     ghost = buildPieceMesh(buildSel);
     ghost.userData.itemId = buildSel;
-    ghost.traverse((m) => { if (m.isMesh) { m.material = m.material.clone(); m.material.transparent = true; m.material.opacity = 0.55; } });
+    ghost.traverse((m) => { if (m.isMesh) { m.material = m.material.clone(); m.material.transparent = true; m.material.opacity = 0.55; m.userData.origColor = m.material.color.clone(); } });
     scene.add(ghost);
   }
   ghost.position.set(x, y, z);
   const ok = ghostValid(x, z);
-  ghost.traverse((m) => { if (m.isMesh) m.material.color.set(ok ? 0x5ed07a : 0xff5a5a); });
+  // Ghost is see-through in the piece's own natural colors — no green
+  // tint. Only an invalid spot tints red, so you can still tell at a
+  // glance that it can't go there.
+  ghost.traverse((m) => { if (m.isMesh) { if (ok) m.material.color.copy(m.userData.origColor); else m.material.color.set(0xff5a5a); } });
   ghost.userData.valid = ok;
 }
 function placeGhostPiece() {
@@ -1602,7 +1599,7 @@ function placeGhostPiece() {
   const mesh = buildPieceMesh(buildSel);
   mesh.position.set(x, y, z);
   scene.add(mesh);
-  const rec = { itemId: buildSel, x, z, y, rotY: 0, color: paintColor, mesh, contents: buildSel === 'chest' ? [] : undefined };
+  const rec = { itemId: buildSel, x, z, y, rotY: 0, color: (buildSel.startsWith('wall_') ? PIECE_COLORS[buildSel.slice(5)] : null) || paintColor, mesh, contents: buildSel === 'chest' ? [] : undefined };
   placed.push(rec);
   if (buildSel === 'house') chatMsg('System', 'House placed! Your land is home.', true);
   updateHUD(); renderBuildBar(); saveGame();
