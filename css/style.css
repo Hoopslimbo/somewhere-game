@@ -239,3 +239,57 @@ input[type=range], input[type=checkbox] { accent-color: var(--gold); }
 .money svg.di, .fuel svg.di { width: 1.2em; height: 1.2em; vertical-align: -0.2em; }
 .bar-row span svg.di { width: 1.1em; height: 1.1em; vertical-align: -0.15em; }
 .world-card b svg.di { width: 1.1em; height: 1.1em; vertical-align: -0.2em; }
+
+/* ---------- In-game redo: clean, smooth (game-scoped overrides) ----------
+   Same clean tone as the lobby redo: soft rounded corners, gentle soft
+   shadows, generous spacing, clean type, restrained sky accent, NO
+   yellow/gold. Lobby and auth styling untouched. */
+#game-screen h3, #game-screen h4 { font-family: inherit; font-weight: 700; text-transform: none; font-style: normal; letter-spacing: 0; text-shadow: none; }
+#game-screen .btn { border-radius: 12px; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.08); color: var(--text); font-weight: 600; text-transform: none; letter-spacing: 0; clip-path: none; filter: none; box-shadow: none; padding: 10px 20px; }
+#game-screen .btn:hover { transform: translateY(-1px); filter: none; background: rgba(255,255,255,.14); box-shadow: 0 6px 18px rgba(0,0,0,.30); }
+#game-screen .btn:active { transform: translateY(0); filter: none; box-shadow: none; }
+#game-screen .btn.primary { background: var(--sky); color: #0b1226; border-color: transparent; }
+#game-screen .btn.primary:hover { background: #a8d4ff; }
+#game-screen .btn.ghost { background: transparent; border-color: rgba(255,255,255,.20); }
+#game-screen .btn.small { border-radius: 10px; padding: 8px 14px; font-size: 13px; }
+#game-screen input, #game-screen select { border-radius: 12px; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06); clip-path: none; font-weight: 500; }
+#game-screen input:focus, #game-screen select:focus { border-color: var(--sky-line); box-shadow: 0 0 0 3px rgba(142,201,255,.25); }
+#game-screen input[type=range], #game-screen input[type=checkbox] { accent-color: var(--sky); }
+#game-screen #crosshair { text-shadow: 0 1px 4px rgba(0,0,0,.7); }
+#game-screen #crosshair.target { text-shadow: 0 0 10px rgba(87,227,46,.7); }
+#game-screen .prompt { background: rgba(10,15,32,.85); border: 1px solid rgba(255,255,255,.14); border-radius: 14px; clip-path: none; filter: none; box-shadow: 0 10px 28px rgba(0,0,0,.35); font-weight: 600; text-transform: none; letter-spacing: 0; backdrop-filter: blur(8px); }
+#game-screen .center-toast { font-family: inherit; font-weight: 700; font-style: normal; text-transform: none; letter-spacing: 0; color: #fff; text-shadow: none; background: rgba(10,15,32,.75); padding: 14px 26px; clip-path: none; border-radius: 16px; border: 1px solid rgba(255,255,255,.12); box-shadow: 0 16px 40px rgba(0,0,0,.35); }
+#game-screen .vitals-bl { background: none; border: none; border-radius: 0; clip-path: none; filter: none; box-shadow: none; backdrop-filter: none; padding: 0; left: 18px; bottom: 20px; gap: 10px; }
+#game-screen .vitals-bl .bar { width: 216px; height: 20px; }
+/* Narrow screens: the centered hotbar reaches the vitals' column, so the
+   floating bars sit above the hotbar there instead of overlapping it. */
+@media (max-width: 1350px) { #game-screen .vitals-bl { bottom: 118px; } }
+#game-screen .bar-row { font-weight: 600; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
+#game-screen .bar { border: 1px solid rgba(255,255,255,.14); border-radius: 999px; clip-path: none; background: rgba(0,0,0,.45); }
+#game-screen .fill.health { background: #ff5a5f; }
+#game-screen .fill.hunger { background: #ff8a5c; }
+#game-screen .fill.fuel { background: var(--sky); }
+#game-screen .hud-right { font-weight: 600; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
+#game-screen .money { color: #fff; font-family: inherit; font-weight: 700; letter-spacing: 0; }
+#game-screen .chat-msg { background: rgba(10,15,32,.7); border-left: 3px solid var(--sky); border-radius: 12px; clip-path: none; font-weight: 500; }
+#game-screen .chat-msg b { color: var(--sky); }
+#game-screen .chat-msg.sys { border-left-color: var(--sky); }
+#game-screen .chat-msg.sys b { color: var(--sky); }
+#game-screen #chat-input { background: rgba(10,15,32,.85); border-radius: 12px; }
+#game-screen .toast { background: rgba(10,15,32,.85); border: 1px solid rgba(255,255,255,.12); border-radius: 14px; clip-path: none; filter: none; box-shadow: 0 12px 30px rgba(0,0,0,.35); font-weight: 600; text-transform: none; letter-spacing: 0; }
+#game-screen .help-panel { background: rgba(10,15,32,.92); border: 1px solid rgba(255,255,255,.12); border-radius: 20px; clip-path: none; filter: none; box-shadow: 0 24px 64px rgba(0,0,0,.5); font-weight: 500; }
+#game-screen .help-panel h3 { color: #fff; }
+#game-screen .slot { border-radius: 14px; border: 1px solid rgba(255,255,255,.22); background: rgba(10,15,32,.72); clip-path: none; filter: none; box-shadow: 0 8px 22px rgba(0,0,0,.30); backdrop-filter: blur(8px); }
+#game-screen .slot.sel { border-color: var(--sky-line); box-shadow: 0 0 0 3px rgba(142,201,255,.25), 0 8px 22px rgba(0,0,0,.30); transform: translateY(-4px); }
+#game-screen .slot.perm { border-style: dashed; border-color: rgba(142,201,255,.7); }
+#game-screen .slot .cnt { color: #fff; font-weight: 700; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
+#game-screen .inv-panel { background: rgba(10,15,32,.92); border: 1px solid rgba(255,255,255,.12); border-radius: 20px; clip-path: none; filter: none; box-shadow: 0 24px 64px rgba(0,0,0,.5); backdrop-filter: blur(16px); }
+#game-screen .inv-head h3 { color: #fff; }
+#game-screen .craft-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,.22); border: none; border-radius: 999px; }
+#game-screen .craft-row { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.10); border-radius: 12px; clip-path: none; font-weight: 500; }
+#game-screen .build-bar { background: rgba(10,15,32,.75); border: 1px solid rgba(255,255,255,.12); border-radius: 16px; clip-path: none; filter: none; box-shadow: 0 12px 30px rgba(0,0,0,.35); backdrop-filter: blur(12px); }
+#game-screen .build-bar button { border-radius: 10px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.07); clip-path: none; font-weight: 600; text-transform: none; letter-spacing: 0; }
+#game-screen .build-bar button:hover { filter: none; background: rgba(255,255,255,.13); }
+#game-screen .build-bar button.sel { background: var(--sky); color: #0b1226; border-color: transparent; }
+#game-screen .shop-panel { background: rgba(10,15,32,.92); border: 1px solid rgba(255,255,255,.12); border-radius: 20px; clip-path: none; filter: none; box-shadow: 0 24px 64px rgba(0,0,0,.5); backdrop-filter: blur(16px); }
+#game-screen .shop-panel h3 { color: #fff; }
