@@ -269,11 +269,13 @@ function bindInput() {
       if (pauseSettingsOpen) { backToPauseMenu(); return; }
       if (pauseOpen) { closePause(); return; }
       if (!$('inv-panel').classList.contains('hidden') || !$('shop-panel').classList.contains('hidden') ||
-          !$('help-panel').classList.contains('hidden') || buildMode) {
+          !$('help-panel').classList.contains('hidden')) {
         closePanels();
-        if (buildMode) setBuildMode(false);
         return;
       }
+      // Esc NEVER exits build mode: in build mode it opens the pause
+      // menu like everywhere else, and Resume returns to build mode
+      // unchanged (openPause/closePause leave buildMode alone).
       openPause();
       return;
     }
@@ -348,7 +350,12 @@ function bindInput() {
       if (target && (target.kind === 'tree' || target.kind === 'rock')) { startHoldAction(); return; }
       onPrimaryAction();
     } else if (e.button === 2) {
-      if (buildMode) { setBuildMode(false); return; }
+      // In build mode RIGHT-click PLACES, exactly like left-click —
+      // it used to exit build mode, which is why Liam's
+      // right-click-to-place cancelled instead of placing. Exiting
+      // build mode is B or switching to a non-building item only —
+      // Esc opens the pause menu instead (see setBuildMode toast).
+      if (buildMode) { placeGhostPiece(); return; }
       doInteract('mouse');
     }
   });
@@ -402,7 +409,7 @@ function requestGameLock() {
 function renderHelp() {
   $('help-panel').innerHTML = `<h3>How to play</h3>
   <p><b>WASD</b> move · <b>Double-tap W</b> sprint (hold W) · <b>Mouse</b> look · <b>Space</b> jump<br>
-  <b>Right-click</b> (or <b>E</b>) interact · <b>Hold left-click</b> to chop / mine · <b>Left-click</b> place<br>
+  <b>Right-click</b> (or <b>E</b>) interact · <b>Hold left-click</b> to chop / mine · <b>Left- or right-click</b> place in build mode · <b>B</b> or switch to a non-building item exits build mode<br>
   <b>1–7</b> hotbar · <b>8, 9, 0</b> permanent slots (car key, house key) · <b>Scroll</b> switch slot<br>
   <b>I</b> backpack · <b>B</b> build mode · <b>Q</b> quick craft · <b>C</b> or <b>T</b> chat · <b>F</b> eat selected food · <b>Esc</b> menu · <b>H</b> this help</p>
   <p>Start: chop trees with your wooden axe. Use the gold bench near spawn to craft walls, tools and machines. Place a vehicle machine, craft a car, and your car key appears in a permanent slot. Watch hunger — eat apples to stay full and regen health.</p>`;
@@ -1485,15 +1492,46 @@ function setBuildMode(on, opened) {
   $('build-bar').classList.toggle('hidden', !on);
   if (on) {
     buildOpened = opened || { by: 'key', key: null };
-    renderBuildBar();
-    if (!buildSel) {
+    // Build selection follows the player: entering build mode picks
+    // the ACTIVE hotbar item when it is placeable, so holding a wall
+    // means placing that wall. Only fall back to the first placeable
+    // item when the active slot holds nothing placeable.
+    const active = selectedItem();
+    if (active && ITEMS[active.id]?.placeable) buildSel = active.id;
+    else if (!buildSel) {
       const first = [...P.hotbar, ...P.inv].find((s) => s && ITEMS[s.id]?.placeable);
       if (first) buildSel = first.id;
     }
-    toast('Build mode — left-click to place, right-click / B to exit. Pieces need ground beneath them.');
+    // Baseline for switch detection: entering with a non-placeable
+    // item held must NOT instantly exit — only an actual SWITCH of
+    // the held item does (see syncBuildSel).
+    buildTrackSlot = selSlot; buildTrackId = active ? active.id : null;
+    renderBuildBar();
+    toast('Build mode — left- or right-click to place, B or switch to a non-building item to exit. Pieces need ground beneath them.');
   } else {
     buildOpened = null;
     if (ghost) { scene.remove(ghost); ghost = null; }
+  }
+}
+// Keep buildSel tracking the active hotbar slot while in build mode
+// (number keys / scroll / panel clicks / drags all funnel through
+// updateHUD). Minecraft-style switch rule: switching to a placeable
+// item switches the ghost to it; switching to a NON-placeable item
+// (or an empty hand) exits build mode outright. The tracked baseline
+// means merely HOLDING a non-placeable item (e.g. entering build mode
+// with an axe held while buildSel came from inventory) does not exit
+// — only an actual change of the held item does.
+let buildTrackSlot = -1, buildTrackId = null;
+function syncBuildSel() {
+  if (!buildMode) { buildTrackSlot = -1; buildTrackId = null; return; }
+  const sel = selectedItem();
+  const id = sel ? sel.id : null;
+  if (selSlot === buildTrackSlot && id === buildTrackId) return;
+  buildTrackSlot = selSlot; buildTrackId = id;
+  if (sel && ITEMS[sel.id]?.placeable) {
+    if (sel.id !== buildSel) { buildSel = sel.id; renderBuildBar(); }
+  } else {
+    setBuildMode(false);
   }
 }
 function renderBuildBar() {
@@ -2066,6 +2104,7 @@ function updateHUD() {
   });
   updateHUDDynamic();
   if (!$('inv-panel').classList.contains('hidden')) renderInvGrid();
+  syncBuildSel();
 }
 function updateHUDDynamic() {
   $('health-fill').style.width = Math.max(0, P.hp) + '%';
