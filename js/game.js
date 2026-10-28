@@ -226,7 +226,7 @@ function initScene() {
   spr.scale.set(2.6, 0.65, 1); spr.position.y = 2.35;
   player.add(spr);
 
-  camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 2500);
+  camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 4500);
   scene.add(camera); // needed so the held-tool viewmodel (a camera child) renders
   buildViewmodel();
   bindInput();
@@ -496,6 +496,13 @@ function loop() {
   const sun = scene.userData.sun;
   sun.position.copy(P.pos).add(new THREE.Vector3(40, 70, 20));
   sun.target.position.copy(P.pos);
+  // Sky dome follows the player (x/z): the island radius (~1075) now
+  // exceeds the dome radius (700), so a static dome would leave a
+  // player at the edge standing outside it. Centered on the player,
+  // the dome always surrounds the camera, and the far plane below
+  // covers island diameter (2150) + dome radius (700) with margin.
+  const sky = scene.userData.sky;
+  if (sky) sky.position.set(P.pos.x, 0, P.pos.z);
   renderer.render(scene, camera);
   saveTimer += dt;
   if (saveTimer > 10) { saveTimer = 0; saveGame(); }

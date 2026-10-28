@@ -90,8 +90,8 @@ export function inCaveCarve(x, z, seed, margin = 0) {
 function baseHeightAt(x, z, seed) {
   const r = Math.hypot(x, z);
   const edgeN = fbm(x * 0.004 + 300, z * 0.004, seed + 21);
-  const edgeR = 310 + (edgeN - 0.5) * 150;
-  const edge = 1 - sstep(edgeR - 24, edgeR + 60, r);
+  const edgeR = 877 + (edgeN - 0.5) * 424;
+  const edge = 1 - sstep(edgeR - 68, edgeR + 170, r);
   const hills = (fbm(x * 0.006, z * 0.006, seed) - 0.5) * 2; // -1..1
   let h = hills * 7.5;
   const mMask = sstep(0.46, 0.68, fbm(x * 0.0035 + 40, z * 0.0035, seed + 7));
@@ -109,9 +109,9 @@ function baseHeightAt(x, z, seed) {
   h -= vMask * 5;
   // Guaranteed massif: one real mountain range on EVERY island, so no seed
   // can roll an all-flat world. Seeded position, kept off the spawn area.
-  const mx = Math.sin(seed * 12.9898) * 180, mz = Math.cos(seed * 78.233) * 180;
+  const mx = Math.sin(seed * 12.9898) * 509, mz = Math.cos(seed * 78.233) * 509;
   const md = Math.hypot(x - mx, z - mz);
-  h += 30 * Math.exp(-(md * md) / (2 * 110 * 110)) * (0.7 + 0.3 * fbm(x * 0.01, z * 0.01, seed + 31));
+  h += 30 * Math.exp(-(md * md) / (2 * 311 * 311)) * (0.7 + 0.3 * fbm(x * 0.01, z * 0.01, seed + 31));
   return h * edge - 3.2;
 }
 export function slopeAt(x, z, seed) {
@@ -145,11 +145,11 @@ function biomeFrom(h, r, caveN) {
 // terrain at all, so no cave could ever spawn there.
 export function cavedHotspot(x, z, seed, h) {
   if (h <= 14) return false;
-  const mx = Math.sin(seed * 12.9898) * 180, mz = Math.cos(seed * 78.233) * 180;
-  // Flanks only (50–110 from the massif center): the peak itself stays
+  const mx = Math.sin(seed * 12.9898) * 509, mz = Math.cos(seed * 78.233) * 509;
+  // Flanks only (141–311 from the massif center): the peak itself stays
   // snowy, so a seed never loses the snowy biome to the hotspot.
   const md = Math.hypot(x - mx, z - mz);
-  return md >= 50 && md < 110;
+  return md >= 141 && md < 311;
 }
 export function biomeAt(x, z, seed) {
   const h = heightAt(x, z, seed);
@@ -398,9 +398,10 @@ function lantern(scene, x, z, seed) {
 }
 
 export function buildWorld(scene, seed) {
-  // WAY larger island: 760 across (was 380) at the same vertex density,
-  // so the landmass radius roughly doubles — about 4× the land area.
-  const SIZE = 760, SEG = 400;
+  // 8× land area vs the 760 island: linear × sqrt(8) ≈ 2.83, so 2150
+  // across (2150² / 760² = 8.0× area) at the same vertex density
+  // (2150/1130 ≈ 760/400 ≈ 1.9 units per vertex).
+  const SIZE = 2150, SEG = 1130;
   // Cave carves are computed FIRST (own RNG stream, so the main rand
   // stream — and therefore tree/rock/chest placement — is untouched)
   // and registered before any heightAt call, so the terrain mesh itself
@@ -498,7 +499,7 @@ export function buildWorld(scene, seed) {
   const spawn = findSpawn(seed);
 
   // ---- Trees: groves + clearings, slope-aware, coastal palms ----
-  for (let i = 0; i < 1100; i++) {
+  for (let i = 0; i < 8800; i++) {
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
@@ -528,7 +529,7 @@ export function buildWorld(scene, seed) {
     trees.push({ group, x, z, h, hp: 3, kind: form, trunkH: trunkH * s, radius: 0.6 * s, scale: s });
   }
   // ---- Rocks: craggy, tinted, clustered on ridges + high ground ----
-  for (let i = 0; i < 350; i++) {
+  for (let i = 0; i < 2800; i++) {
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
@@ -549,7 +550,7 @@ export function buildWorld(scene, seed) {
   }
   // Ground stones (pickup fallback for chopping)
   const groundStones = [];
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 320; i++) {
     const x = spawn.x + (rand() - 0.5) * 44, z = spawn.z + (rand() - 0.5) * 44;
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
@@ -567,7 +568,7 @@ export function buildWorld(scene, seed) {
     [{ id: 'seed_carrot', n: 4 }, { id: 'money', n: 20 }],
     [{ id: 'iron', n: 2 }, { id: 'leather', n: 2 }, { id: 'seed_wheat', n: 3 }],
   ];
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 240; i++) {
     const x = (rand() - 0.5) * (SIZE - 40), z = (rand() - 0.5) * (SIZE - 40);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
@@ -599,10 +600,10 @@ export function buildWorld(scene, seed) {
   const dummy = new THREE.Object3D();
   const bushGeo = new THREE.SphereGeometry(0.7, 7, 5);
   const bushMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
-  const bushes = new THREE.InstancedMesh(bushGeo, bushMat, 380);
+  const bushes = new THREE.InstancedMesh(bushGeo, bushMat, 3040);
   const bushCol = new THREE.Color();
   let bi = 0;
-  for (let i = 0; i < 900 && bi < 380; i++) {
+  for (let i = 0; i < 7200 && bi < 3040; i++) {
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
@@ -627,10 +628,10 @@ export function buildWorld(scene, seed) {
   // slightly flattened and tilted, so they read as lawn, not saplings.
   const grassGeo = new THREE.ConeGeometry(0.035, 0.30, 4);
   const grassMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
-  const grass = new THREE.InstancedMesh(grassGeo, grassMat, 1500);
+  const grass = new THREE.InstancedMesh(grassGeo, grassMat, 12000);
   let gi = 0;
   const grassCol = new THREE.Color();
-  for (let i = 0; i < 3400 && gi < 1500; i++) {
+  for (let i = 0; i < 27200 && gi < 12000; i++) {
     let x, z;
     if (i < 130) { x = spawn.x + (rand() - 0.5) * 36; z = spawn.z + (rand() - 0.5) * 36; }
     else { x = (rand() - 0.5) * (SIZE - 20); z = (rand() - 0.5) * (SIZE - 20); }
@@ -656,10 +657,10 @@ export function buildWorld(scene, seed) {
   scene.add(grass);
   const flowerGeo = new THREE.SphereGeometry(0.07, 6, 5);
   const flowerMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 });
-  const flowers = new THREE.InstancedMesh(flowerGeo, flowerMat, 140);
+  const flowers = new THREE.InstancedMesh(flowerGeo, flowerMat, 1120);
   const flowerCols = [0xe86a92, 0xf5c542, 0xffffff, 0xc07ae0];
   let fi = 0;
-  for (let i = 0; i < 450 && fi < 140; i++) {
+  for (let i = 0; i < 3600 && fi < 1120; i++) {
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
@@ -681,10 +682,10 @@ export function buildWorld(scene, seed) {
   // Close-up richness: the ground is never a bare flat color up close.
   const pebGeo = new THREE.DodecahedronGeometry(1, 0);
   const pebMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
-  const pebbles = new THREE.InstancedMesh(pebGeo, pebMat, 900);
+  const pebbles = new THREE.InstancedMesh(pebGeo, pebMat, 7200);
   const pebCol = new THREE.Color();
   let pi = 0;
-  for (let i = 0; i < 2000 && pi < 900; i++) {
+  for (let i = 0; i < 16000 && pi < 7200; i++) {
     // First samples cluster near spawn so the ground reads detailed
     // the moment you step out, not just far away
     let x, z;
@@ -713,7 +714,7 @@ export function buildWorld(scene, seed) {
   scene.add(pebbles);
   // Dirt patch discs hugging the ground (plains / forest / desert)
   const dirtMat = new THREE.MeshStandardMaterial({ color: 0x6b4e2e, roughness: 1 });
-  for (let i = 0; i < 200; i++) {
+  for (let i = 0; i < 1600; i++) {
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
@@ -754,8 +755,8 @@ export function buildWorld(scene, seed) {
       const caveN = fbm(x * 0.006 + 300, z * 0.006, seed);
       const b = cavedHotspot(x, z, seed, mh) ? 'caved' : biomeFrom(mh, r, caveN);
       if (b !== 'caved') return false;
-      if (Math.hypot(x - spawn.x, z - spawn.z) < 60) return false;
-      if (carves.some((c) => Math.hypot(c.mx - x, c.mz - z) < 110)) return false;
+      if (Math.hypot(x - spawn.x, z - spawn.z) < 170) return false;
+      if (carves.some((c) => Math.hypot(c.mx - x, c.mz - z) < 311)) return false;
       // Uphill direction = into the hill; the mouth faces downhill.
       const gx = baseHeightAt(x + 2, z, seed) - baseHeightAt(x - 2, z, seed);
       const gz = baseHeightAt(x, z + 2, seed) - baseHeightAt(x, z - 2, seed);
@@ -769,11 +770,11 @@ export function buildWorld(scene, seed) {
       return true;
     };
     for (let i = 0; i < 500 && carves.length < 4; i++) {
-      trySite((crand() - 0.5) * 700, (crand() - 0.5) * 700);
+      trySite((crand() - 0.5) * 1980, (crand() - 0.5) * 1980);
     }
     if (carves.length < 4) {
       const scored = [];
-      for (let x = -340; x <= 340; x += 20) for (let z = -340; z <= 340; z += 20) {
+      for (let x = -960; x <= 960; x += 57) for (let z = -960; z <= 960; z += 57) {
         const h = baseHeightAt(x, z, seed);
         const caveN = fbm(x * 0.006 + 300, z * 0.006, seed);
         if (h > 12 && caveN > 0.50) scored.push({ x, z, s: caveN + h / 100 });
