@@ -3,8 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Somewhere</title>
+<title>UNBOUND</title>
 <link rel="icon" type="image/png" href="assets/logo.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0a0e1e">
+<link rel="apple-touch-icon" href="assets/icon-192.png">
 <link rel="stylesheet" href="css/style.css">
 <script type="importmap">
 { "imports": { "three": "./assets/three.module.js" } }
@@ -20,7 +23,7 @@
 <!-- ============ AUTH ============ -->
 <section id="auth-screen" class="screen hidden">
   <div class="auth-card">
-    <h1>Somewhere</h1>
+    <h1>UNBOUND</h1>
     <p class="tagline">A huge island. Your rules. Your world.</p>
     <div class="auth-tabs">
       <button id="tab-signin" class="auth-tab active">Sign in</button>
@@ -229,8 +232,8 @@
      synchronous world build doesn't look like a frozen lag spike. -->
 <div id="loading-screen" class="hidden">
   <div class="loading-card">
-    <img src="assets/logo.png" class="loading-logo" alt="Somewhere">
-    <h1>Somewhere</h1>
+    <img src="assets/logo.png" class="loading-logo" alt="UNBOUND">
+    <h1>UNBOUND</h1>
     <div class="loading-spinner"></div>
     <p>Building your island…</p>
   </div>
@@ -307,5 +310,13 @@
 
 <script type="module" src="js/lobby.js"></script>
 <script type="module" src="js/game.js"></script>
+<script>
+  // PWA: register the service worker (http(s) only — not file://).
+  if ('serviceWorker' in navigator && (location.protocol === 'http:' || location.protocol === 'https:')) {
+    navigator.serviceWorker.register('./sw.js').catch(function (err) {
+      console.warn('Service worker registration failed:', err);
+    });
+  }
+</script>
 </body>
 </html>
