@@ -269,7 +269,7 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
   .friends-panel { display: none; }
   .lobby-hero { grid-template-columns: 1fr; }
   .lobby-bottom { margin: 0 18px 18px; }
-  #char-canvas { width: 260px; height: 330px; }
+  #char-canvas { width: 290px; height: 365px; }
   .chat-box { width: 300px; }
 }
 
@@ -342,21 +342,50 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
    and the friends panel is an overlay on the right — it can never push
    the character off-center, at any width. */
 #lobby-screen .lobby-hero { position: relative; display: block; height: 480px; }
-#lobby-screen .lobby-center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 4; }
+/* Hero character: centered on the TRUE center of the screen, both axes.
+   position: fixed (not absolute in the 480px hero stage, which used to
+   park the group ~100px above viewport center) so the whole group —
+   nameplate + character + Play control — has its centroid at 50%/50%
+   of the viewport. The friends overlay can never push it off-center,
+   and the Play control below it moves with it. Menu mode still hides
+   it via display: none on the hero ancestor. */
+#lobby-screen .lobby-center { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 4; }
+#lobby-screen #char-canvas { width: 312px; height: 390px; }
 #lobby-screen .friends-panel { position: absolute; right: 28px; top: 50%; transform: translateY(-50%); width: 300px; z-index: 5; }
 /* Worlds panel, Fortnite-style slide-up: in Play mode the panel is a
    fixed full-screen sheet translated below the viewport when closed;
    opening slides it UP to cover the whole lobby. In menu mode it
    returns to its normal in-flow layout below the header. */
-#lobby-screen:not(.menu-open) .lobby-bottom { position: fixed; left: 0; right: 0; top: 0; bottom: 0; z-index: 25; margin: 0; border-radius: 0; padding: 70px 28px 28px; transform: translateY(102%); transition: transform .38s ease; overflow-y: auto; background: rgba(10,15,32,.96); }
-#lobby-screen:not(.menu-open).worlds-open .lobby-bottom { transform: translateY(0); }
-/* The little tab: bottom-center when closed, top-center when open. */
-#lobby-screen .worlds-tab { position: fixed; left: 50%; transform: translateX(-50%); bottom: 14px; margin: 0; z-index: 30; }
-#lobby-screen.worlds-open .worlds-tab { top: 16px; bottom: auto; }
+#lobby-screen:not(.menu-open) .lobby-bottom { position: fixed; left: 0; right: 0; top: 0; bottom: 0; z-index: 25; margin: 0; border: none; border-radius: 0; padding: 0 28px 28px; transform: translateY(calc(100% - 40px)); transition: transform .38s ease, background .38s ease; overflow: hidden; background: transparent; backdrop-filter: none; box-shadow: none; }
+/* NO bar/band by the trapezoid, in either state: the sheet itself is
+   fully transparent (no background, no blur, no shadow) and the dark
+   panel background lives only on the content panel below the handle.
+   Closed, only the trapezoid shows; open, the white handle sits
+   flush on the dark content panel below it — zero gap, no strip. */
+#lobby-screen:not(.menu-open).worlds-open .lobby-bottom { transform: translateY(0); overflow-y: auto; background: transparent; backdrop-filter: none; box-shadow: none; }
+#lobby-screen:not(.menu-open) #panel-play { background: rgba(10,15,32,.96); border-radius: 20px; padding: 22px; min-height: calc(100% - 40px); box-sizing: border-box; }
+/* Worlds flash guard: when leaving a menu tab, the sheet must snap
+   below the viewport instantly — never animate through it. JS adds
+   this class around the menu-open toggle only. */
+#lobby-screen.sheet-no-anim .lobby-bottom { transition: none !important; }
+/* Trapezoid handle, ATTACHED to the sheet's top edge: it is the sheet's
+   first child, in normal flow, so it travels with the panel through
+   the whole slide and never detaches. Closed, the sheet sits exactly
+   one handle-height below the viewport bottom, so only the handle
+   peeks out at the bottom center. Open, the handle sits at the very
+   top of the full-screen sheet. Sticky keeps it pinned at the top
+   while the sheet's own content scrolls beneath it. */
+#lobby-screen .worlds-tab { position: sticky; top: 0; z-index: 50; display: block; width: max-content; margin: 0 auto; padding: 12px 38px 14px; font-size: 14px; line-height: 1; font-weight: 800; color: #0b1226; background: #fff; border: none; border-radius: 0; box-shadow: 0 8px 24px rgba(0,0,0,.35); clip-path: polygon(0 100%, 100% 100%, 84% 0, 16% 0); cursor: pointer; }
+#lobby-screen .worlds-tab:hover { background: #e8f1ff; }
 /* Selected-world + Play control below the character: bolder, slightly
-   larger, still clean — and the character stays centered regardless. */
-#lobby-screen .selected-world { font-weight: 800; font-size: 16px; }
-#lobby-screen #btn-play { font-size: 19px; padding: 16px 34px; font-weight: 800; }
+   larger, still clean — and the character stays centered regardless.
+   Outline split: the selected-world label below the button keeps its
+   crisp dark outline so it pops against the 3D lobby background
+   (layered text-shadow ring: renders everywhere, changes no layout,
+   so centering is untouched); the Play button text itself is plain
+   bold with no outline ring. */
+#lobby-screen .selected-world { font-weight: 900; font-size: 19px; letter-spacing: .2px; text-shadow: -2px 0 0 rgba(0,0,0,.85), 2px 0 0 rgba(0,0,0,.85), 0 -2px 0 rgba(0,0,0,.85), 0 2px 0 rgba(0,0,0,.85), -1.5px -1.5px 0 rgba(0,0,0,.85), 1.5px -1.5px 0 rgba(0,0,0,.85), -1.5px 1.5px 0 rgba(0,0,0,.85), 1.5px 1.5px 0 rgba(0,0,0,.85), 0 4px 14px rgba(0,0,0,.6); }
+#lobby-screen #btn-play { font-size: 22px; padding: 19px 40px; font-weight: 900; letter-spacing: .3px; text-shadow: none; box-shadow: 0 10px 28px rgba(0,0,0,.45); }
 /* Workbench category tabs (LEGO Fortnite-style organization). */
 .craft-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 10px; }
 /* Inventory drag-to-reorder affordances. */

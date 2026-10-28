@@ -133,7 +133,7 @@ function initLobby3D() {
 
   charRenderer = new THREE.WebGLRenderer({ canvas: $('char-canvas'), antialias: true, alpha: true });
   charRenderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-  charRenderer.setSize(280, 350);
+  charRenderer.setSize(312, 390);
   charScene = new THREE.Scene();
   charScene.add(new THREE.HemisphereLight(0xffffff, 0x3a4a5a, 0.9));
   const dl = new THREE.DirectionalLight(0xffffff, 1.6); dl.position.set(2, 4, 3); charScene.add(dl);
@@ -250,10 +250,23 @@ function switchTab(tab) {
   for (const p of ['play', 'customize', 'invites', 'settings']) {
     $('panel-' + p).classList.toggle('hidden', p !== tab);
   }
-  $('lobby-screen').classList.toggle('menu-open', tab !== 'play');
-  // Leaving Play closes the slide-up worlds panel (its tab is hidden
+  // Leaving Play closes the slide-up worlds panel (its handle is hidden
   // in menu mode anyway); returning to Play starts with it closed.
-  if (tab !== 'play') setWorldsOpen(false);
+  if (tab !== 'play') {
+    $('lobby-screen').classList.add('menu-open');
+    setWorldsOpen(false);
+  } else {
+    // Worlds-flash fix: in menu mode the sheet sits in normal flow, so
+    // removing menu-open would otherwise ANIMATE it from in-flow down
+    // through the viewport (the split-second worlds flash). Suppress
+    // the transition around the toggle so the sheet snaps instantly
+    // below the viewport; later open/close animations still animate.
+    const scr = $('lobby-screen');
+    scr.classList.add('sheet-no-anim');
+    scr.classList.remove('menu-open');
+    void scr.offsetHeight; // force reflow while transitions are off
+    scr.classList.remove('sheet-no-anim');
+  }
 }
 // Worlds panel access, Fortnite-style: a small tab sits at the bottom
 // of the lobby screen. Tapping it OR scrolling down slides the panel

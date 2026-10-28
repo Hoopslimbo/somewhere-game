@@ -81,6 +81,9 @@
   </div>
 
   <div class="lobby-bottom" id="lobby-bottom">
+    <!-- Trapezoid handle, physically attached to the top edge of the
+         worlds sheet: it travels with the panel during the slide. -->
+    <button id="worlds-tab" class="worlds-tab">▴ Worlds</button>
     <!-- PLAY TAB -->
     <div id="panel-play" class="lobby-panel">
       <div class="panel-tabs">
@@ -94,7 +97,7 @@
       </div>
       <div id="worlds-list" class="world-row"></div>
       <div id="servers-list" class="world-row hidden"></div>
-      <p class="fine">Private only — no public servers. Worlds cap at 30. Servers have no cap. Tap the Worlds tab at the bottom — or scroll down — and this panel slides up over the lobby. Tap the tab again at the top, or scroll back up, to close it.</p>
+      <p class="fine">Private only — no public servers. Worlds cap at 30. Servers have no cap. Tap the trapezoid handle at the bottom — or scroll down — and this panel slides up over the lobby. Tap the handle again at the top, or scroll all the way up, to close it.</p>
     </div>
     <!-- CUSTOMIZE TAB -->
     <div id="panel-customize" class="lobby-panel hidden">
@@ -139,9 +142,6 @@
       <p class="fine">Controls: WASD Move · Mouse Look · Space Jump · Right-Click (or E) Interact · Hold Left-Click to Chop / Mine · Left-Click Place · Double-Tap W Sprint · C or T Chat · I Inventory · B Build Mode · Q Quick Craft · H Help · Esc Menu · 1–7 Hotbar · 8, 9, 0 Permanent Slots · Scroll to Switch Slots.</p>
     </div>
   </div>
-
-  <!-- Tiny tab at the bottom of the screen: toggles the worlds panel. -->
-  <button id="worlds-tab" class="worlds-tab">▾ Worlds</button>
 
   <div id="world-dialog" class="dialog hidden">
     <div class="dialog-card">
