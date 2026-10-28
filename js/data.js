@@ -25,6 +25,7 @@ export const ITEMS = {
   leather: { name: 'Leather', chip: '#7a4a22' },
   sandbag: { name: 'Sand bag', chip: '#d8c08a' },
   snowbag: { name: 'Snow bag', chip: '#dfe9f2' },
+  dirtbag: { name: 'Dirt bag', chip: '#6b4a2f' },
   glass: { name: 'Glass', chip: '#9fd4ff' },
   ice: { name: 'Ice block', chip: '#bfe8ff' },
   apple: { name: 'Apple', chip: '#e5484d' },

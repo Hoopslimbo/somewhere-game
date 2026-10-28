@@ -57,8 +57,8 @@
     <div class="header-user">
       <span id="header-username"></span>
       <img id="header-pfp" class="mini-pfp" alt="">
-      <button id="btn-signout" class="btn small ghost">Sign out</button>
     </div>
+    <button id="btn-friends" class="btn small">Friends</button>
   </header>
 
   <div class="lobby-hero">
@@ -69,16 +69,21 @@
       <button id="btn-play" class="btn primary big hidden">▶ Play</button>
       <div id="selected-world-label" class="selected-world"></div>
     </div>
-
-    <aside class="friends-panel">
-      <h3>Friends</h3>
-      <div id="friends-list"></div>
-      <div class="add-friend">
-        <input id="friend-name" type="text" maxlength="15" placeholder="Add by username">
-        <button id="btn-add-friend" class="btn small">Add</button>
-      </div>
-    </aside>
   </div>
+
+  <!-- Friends slide-in panel: hidden by default; the Friends button
+       (top right) or F slides it in from the right edge, full height. -->
+  <aside class="friends-panel" id="friends-panel">
+    <div class="friends-head">
+      <h3>Friends</h3>
+      <button id="btn-close-friends" class="btn small ghost" title="Close friends">✕</button>
+    </div>
+    <div id="friends-list"></div>
+    <div class="add-friend">
+      <input id="friend-name" type="text" maxlength="15" placeholder="Add by username">
+      <button id="btn-add-friend" class="btn small">Add</button>
+    </div>
+  </aside>
 
   <div class="lobby-bottom" id="lobby-bottom">
     <!-- Trapezoid handle, physically attached to the top edge of the
@@ -139,7 +144,9 @@
         <label>Username <input id="set-username" type="text" maxlength="15"></label>
         <label>Profile picture <input id="set-pfp" type="file" accept="image/*"></label>
       </div>
-      <p class="fine">Controls: WASD Move · Mouse Look · Space Jump · Right-Click (or E) Interact · Hold Left-Click to Chop / Mine · Left-Click Place · Double-Tap W Sprint · C or T Chat · I Inventory · B Build Mode · Q Quick Craft · H Help · Esc Menu · 1–7 Hotbar · 8, 9, 0 Permanent Slots · Scroll to Switch Slots.</p>
+      <h4>Account</h4>
+      <div style="margin-top:4px"><button id="btn-signout" class="btn small ghost">Sign out</button></div>
+      <p class="fine">Controls: WASD Move · Mouse Look · Space Jump · Right-Click (or E) Interact · Hold Left-Click to Chop / Mine · Left-Click Place · Double-Tap W Sprint · C or T Chat · I Inventory · B Build Mode · Q Quick Craft · H Help · Esc Menu · F Friends · 1–7 Hotbar · 8, 9, 0 Permanent Slots · Scroll to Switch Slots.</p>
     </div>
   </div>
 
@@ -195,6 +202,17 @@
     </div>
   </div>
 </section>
+
+<!-- Loading screen: shown between Play and world entry so the big
+     synchronous world build doesn't look like a frozen lag spike. -->
+<div id="loading-screen" class="hidden">
+  <div class="loading-card">
+    <img src="assets/logo.png" class="loading-logo" alt="Somewhere">
+    <h1>Somewhere</h1>
+    <div class="loading-spinner"></div>
+    <p>Building your island…</p>
+  </div>
+</div>
 
 <!-- ============ GAME ============ -->
 <section id="game-screen" class="screen hidden">

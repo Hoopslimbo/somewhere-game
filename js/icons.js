@@ -17,6 +17,7 @@ export const ICONS = {
   iron: G(`<path d="M10 31 L14 18 L34 18 L38 31 Z" fill="#b8bcc2"/><line x1="14" y1="23" x2="34" y2="23" stroke="#7d8288"/><line x1="18" y1="31" x2="20" y2="18" stroke="#dfe3e8"/>`),
   leather: G(`<path d="M10 12 L38 12 L40 30 Q40 38 32 38 L16 38 Q8 38 8 30 Z" fill="#b07a3e"/><path d="M13 17 L35 17 M13 24 L35 24 M13 31 L35 31" stroke="#7a4a22" stroke-dasharray="4 3"/>`),
   sandbag: sack('#d8c08a', '#b89a5e'),
+  dirtbag: sack('#8a5a33', '#5a3a1a'),
   snowbag: G(`<path d="M14 18 Q14 12 24 12 Q34 12 34 18 L36 34 Q36 40 30 40 L18 40 Q12 40 12 34 Z" fill="#e8f1f8"/><g stroke="#57b6ff"><line x1="24" y1="20" x2="24" y2="34"/><line x1="18" y1="24" x2="30" y2="30"/><line x1="30" y1="24" x2="18" y2="30"/></g>`),
   glass: G(`<rect x="10" y="10" width="28" height="28" rx="2" fill="#bfe6ff"/><line x1="10" y1="10" x2="38" y2="38" stroke="#ffffff" stroke-width="3"/><line x1="24" y1="10" x2="24" y2="38" stroke="#7ab8e8"/><line x1="10" y1="24" x2="38" y2="24" stroke="#7ab8e8"/>`),
   ice: G(`<rect x="10" y="12" width="28" height="26" rx="2" fill="#bfe8ff"/><path d="M10 12 L20 6 L38 6 L38 12" fill="#e2f5ff"/><path d="M14 20 L22 28 M28 16 L24 26" stroke="#7ab8e8"/>`),

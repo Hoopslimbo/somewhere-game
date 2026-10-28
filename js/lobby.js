@@ -645,10 +645,47 @@ $('btn-play').onclick = () => {
     const lk = $('game-canvas').requestPointerLock();
     if (lk && lk.catch) lk.catch(() => {});
   } catch { /* click-to-lock fallback still works */ }
-  if (window.startGame) window.startGame(world);
-  else { const iv = setInterval(() => { if (window.startGame) { clearInterval(iv); window.startGame(world); } }, 100); }
+  // Loading screen FIRST: the world build is one big synchronous job,
+  // so without a painted loading frame first it just looks like the
+  // game froze. Yield two frames + a beat so the overlay actually
+  // paints, then build; hide it once startGame returns (its loop is
+  // already running by then).
+  $('loading-screen').classList.remove('hidden');
+  const go = () => {
+    if (window.startGame) {
+      try { window.startGame(world); } finally { $('loading-screen').classList.add('hidden'); }
+    } else {
+      const iv = setInterval(() => {
+        if (window.startGame) {
+          clearInterval(iv);
+          try { window.startGame(world); } finally { $('loading-screen').classList.add('hidden'); }
+        }
+      }, 100);
+    }
+  };
+  requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(go, 30)));
 };
 
+// Friends slide-in panel: hidden by default; the Friends button (top
+// right) or F slides it in from the right edge, full height. X, the
+// button again, or F again closes it. F is lobby-only here — in-game,
+// F still eats (game.js owns that binding and is out of scope for
+// this batch), and F never fires while typing in an input.
+let friendsOpen = false;
+function setFriendsOpen(open) {
+  friendsOpen = open;
+  $('lobby-screen').classList.toggle('friends-open', open);
+  if (open) renderFriends();
+}
+$('btn-friends').onclick = () => setFriendsOpen(!friendsOpen);
+$('btn-close-friends').onclick = () => setFriendsOpen(false);
+document.addEventListener('keydown', (e) => {
+  if (e.code !== 'KeyF') return;
+  if ($('lobby-screen').classList.contains('hidden')) return;
+  const tag = (document.activeElement && document.activeElement.tagName) || '';
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  setFriendsOpen(!friendsOpen);
+});
 function renderFriends() {
   $('friends-list').innerHTML = '';
   if (!S.friends.length) {

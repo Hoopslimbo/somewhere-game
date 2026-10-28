@@ -69,6 +69,16 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
 /* ---------- Boot loading (no signed-out flash) ---------- */
 #boot-loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--bg); color: var(--dim); font-size: 18px; font-weight: 600; z-index: 200; }
 
+/* Loading screen between Play and world entry: covers the synchronous
+   world build so it reads as loading, not a frozen lag spike. */
+#loading-screen { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: #0a0e1e; z-index: 150; }
+.loading-card { display: flex; flex-direction: column; align-items: center; gap: 18px; text-align: center; }
+.loading-card h1 { font-size: 40px; font-weight: 800; letter-spacing: 0; font-family: inherit; font-style: normal; text-transform: none; text-shadow: none; }
+.loading-logo { width: 96px; height: 96px; object-fit: contain; }
+.loading-spinner { width: 44px; height: 44px; border-radius: 50%; border: 4px solid rgba(255,255,255,.2); border-top-color: #fff; animation: loading-spin 0.9s linear infinite; }
+@keyframes loading-spin { to { transform: rotate(360deg); } }
+.loading-card p { font-weight: 600; color: rgba(255,255,255,.75); }
+
 /* ---------- Lobby ---------- */
 /* Fixed lobby: header, hero (character + friends), and tabs NEVER
    scroll away. ONLY the worlds area scrolls, inside its own region below
@@ -76,7 +86,7 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
 #lobby-screen { overflow: hidden; display: flex; flex-direction: column; }
 #lobby-bg { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 .lobby-header { position: relative; flex: none; display: flex; align-items: center; padding: 16px 24px 18px; background: linear-gradient(rgba(8,12,26,.85), rgba(8,12,26,.45) 70%, transparent); border-bottom: 1px solid rgba(255,255,255,.08); z-index: 5; backdrop-filter: blur(12px); }
-.lobby-hero { position: relative; z-index: 4; flex: none; display: grid; grid-template-columns: 1fr 300px; align-items: center; gap: 24px; padding: 12px 28px 34px; }
+.lobby-hero { position: relative; z-index: 4; flex: none; display: grid; grid-template-columns: 1fr; align-items: center; gap: 24px; padding: 12px 28px 34px; }
 /* Menu mode (a top tab other than Play): the hero + friends disappear and
    the menu panel fills the screen below the header. */
 #lobby-screen.menu-open .lobby-hero { display: none; }
@@ -266,7 +276,6 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
 .shop-panel h3 { margin-bottom: 10px; color: #fff; }
 #error-overlay { position: fixed; inset: auto 0 0 0; background: #5a1010; color: #fff; padding: 10px 16px; font: 13px monospace; z-index: 100; white-space: pre-wrap; }
 @media (max-width: 900px) {
-  .friends-panel { display: none; }
   .lobby-hero { grid-template-columns: 1fr; }
   .lobby-bottom { margin: 0 18px 18px; }
   #char-canvas { width: 290px; height: 365px; }
@@ -351,7 +360,10 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
    it via display: none on the hero ancestor. */
 #lobby-screen .lobby-center { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 4; }
 #lobby-screen #char-canvas { width: 312px; height: 390px; }
-#lobby-screen .friends-panel { position: absolute; right: 28px; top: 50%; transform: translateY(-50%); width: 300px; z-index: 5; }
+#lobby-screen .friends-panel { position: fixed; right: 0; top: 0; bottom: 0; width: 320px; max-width: 86vw; max-height: none; border-radius: 20px 0 0 20px; z-index: 40; transform: translateX(105%); transition: transform .32s ease; overflow-y: auto; }
+#lobby-screen.friends-open .friends-panel { transform: translateX(0); }
+.friends-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.friends-head h3 { margin-bottom: 0; }
 /* Worlds panel, Fortnite-style slide-up: in Play mode the panel is a
    fixed full-screen sheet translated below the viewport when closed;
    opening slides it UP to cover the whole lobby. In menu mode it

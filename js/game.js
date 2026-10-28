@@ -346,8 +346,8 @@ function bindInput() {
     }
     if (e.button === 0) {
       if (buildMode) { placeGhostPiece(); return; }
-      // Chop/mine need a HOLD, not a spam-click (see startHoldAction).
-      if (target && (target.kind === 'tree' || target.kind === 'rock')) { startHoldAction(); return; }
+      // Chop/mine/dig need a HOLD, not a spam-click (see startHoldAction).
+      if (target && (target.kind === 'tree' || target.kind === 'rock' || target.kind === 'ground')) { startHoldAction(); return; }
       onPrimaryAction();
     } else if (e.button === 2) {
       // In build mode RIGHT-click PLACES, exactly like left-click —
@@ -366,8 +366,23 @@ function bindInput() {
   // release happens (including over a panel or outside the window).
   document.addEventListener('mouseup', (e) => { if (e.button === 0) stopHoldAction(); });
   window.addEventListener('blur', stopHoldAction);
+  // True when any in-game panel is open: inventory, workbench / chest /
+  // shop (all share .shop-panel), help, or the pause menu (its Settings
+  // submenu lives inside the same element). The wheel must scroll such
+  // a panel natively and never move the hotbar selection while it is open.
+  function anyPanelOpen() {
+    return !$('inv-panel').classList.contains('hidden') ||
+      !$('shop-panel').classList.contains('hidden') ||
+      !$('help-panel').classList.contains('hidden') ||
+      !$('pause-menu').classList.contains('hidden');
+  }
+  // The wheel changes the hotbar selection ONLY during pure gameplay.
+  // The handler stays passive so native panel scrolling is untouched;
+  // it simply returns early while a panel is open, so the selection
+  // never moves under an open workbench, chest, shop, inventory,
+  // help, or pause panel.
   document.addEventListener('wheel', (e) => {
-    if (!started || chatOpen) return;
+    if (!started || chatOpen || anyPanelOpen()) return;
     selSlot = (selSlot + (e.deltaY > 0 ? 1 : 9)) % 10;
     updateHUD();
   }, { passive: true });
@@ -410,7 +425,7 @@ function requestGameLock() {
 function renderHelp() {
   $('help-panel').innerHTML = `<h3>How to play</h3>
   <p><b>WASD</b> move · <b>Double-tap W</b> sprint (hold W) · <b>Mouse</b> look · <b>Space</b> jump<br>
-  <b>Right-click</b> (or <b>E</b>) interact · <b>Hold left-click</b> to chop / mine · <b>Left- or right-click</b> place in build mode · <b>B</b> or switch to a non-building item exits build mode<br>
+  <b>Right-click</b> (or <b>E</b>) interact · <b>Hold left-click</b> to chop / mine / dig · <b>Left- or right-click</b> place in build mode · <b>B</b> or switch to a non-building item exits build mode<br>
   <b>1–7</b> hotbar · <b>8, 9, 0</b> permanent slots (car key, house key) · <b>Scroll</b> switch slot<br>
   <b>I</b> backpack · <b>B</b> build mode · <b>Q</b> quick craft · <b>C</b> or <b>T</b> chat · <b>F</b> eat selected food · <b>Esc</b> menu · <b>H</b> this help</p>
   <p>Start: chop trees with your wooden axe. Use the gold bench near spawn to craft walls, tools and machines. Place a vehicle machine, craft a car, and your car key appears in a permanent slot. Watch hunger — eat apples to stay full and regen health.</p>`;
@@ -683,6 +698,7 @@ function dropMeshFor(id) {
     case 'leather': bx(0.42, 0.05, 0.3, M(0x7a4a22, 0.95)); bx(0.3, 0.055, 0.2, M(0x8a5a2b, 0.95), 0, 0.01, 0); break;
     case 'sandbag': sph(0.22, M(0xd8c08a, 1), 0, 0, 0, 1.2, 0.6, 0.8); break;
     case 'snowbag': sph(0.22, M(0xffffff, 0.9), 0, 0, 0, 1.2, 0.6, 0.8); break;
+    case 'dirtbag': sph(0.22, M(0x6b4a2f, 1), 0, 0, 0, 1.2, 0.6, 0.8); break;
     case 'glass': bx(0.34, 0.3, 0.04, new THREE.MeshStandardMaterial({ color: 0x9fd4ff, transparent: true, opacity: 0.6, roughness: 0.1 })); break;
     case 'ice': bx(0.3, 0.3, 0.3, new THREE.MeshStandardMaterial({ color: 0xbfe8ff, transparent: true, opacity: 0.85, roughness: 0.2 })); break;
     case 'money': cyl(0.16, 0.16, 0.05, M(0xf5c542, 0.35, 0.8), 0, 0, 0, Math.PI / 2.4, 0, 0, 16); break;
@@ -889,7 +905,61 @@ function findTarget() {
   for (const p of placed) consider(p.x, p.y + 1, p.z, 1.6, { kind: 'placed', ref: p });
   for (const car of cars) if (!car.broken) consider(car.group.position.x, car.group.position.y + 0.8, car.group.position.z, 2.1, { kind: 'car', ref: car });
   for (const pl of crops) consider(pl.x, groundY(pl.x, pl.z) + 0.3, pl.z, 0.65, { kind: 'crop', ref: pl });
+  // Ground digging (shovel only): when no object target is closer and
+  // the shovel is held, the terrain ground itself becomes the target.
+  // Digging never alters the terrain mesh — it only grants a bag.
+  if (!best) {
+    const sel = selectedItem();
+    if (sel && ITEMS[sel.id]?.tool === 'shovel') {
+      const cell = groundDigCell();
+      if (cell && isDiggableCell(cell.x, cell.z)) best = { kind: 'ground', x: cell.x, z: cell.z, y: cell.y };
+    }
+  }
   return best;
+}
+// ---------- Digging (shovel) ----------
+// Yield by biome: desert sand, snowy-mountain tops snow, any other
+// natural walkable dirt plain dirt. 'snowy' from biomeAt already means
+// high elevation (h > 17), i.e. the mountain tops, not low snowy ground.
+function digYield(x, z) {
+  const b = biomeAt(x, z, W.seed);
+  if (b === 'desert') return 'sandbag';
+  if (b === 'snowy') return 'snowbag';
+  return 'dirtbag';
+}
+function digYieldLabel(id) { return id === 'sandbag' ? 'Sand' : id === 'snowbag' ? 'Snow' : 'Dirt'; }
+// True only for natural walkable dirt: never water/shore, never ground
+// under a generated-structure footprint (interactables) or a placed
+// piece, never a planted crop plot.
+function isDiggableCell(x, z) {
+  if (heightAt(x, z, W.seed) < 0.3) return false; // water, same convention as build placement
+  for (const it of world.interactables) {
+    const rad = (it.radius || 3) + 1;
+    if (Math.hypot(it.x - x, it.z - z) < rad) return false;
+  }
+  for (const p of placed) if (Math.hypot(p.x - x, p.z - z) < 1.6) return false;
+  for (const c of crops) if (Math.hypot(c.x - x, c.z - z) < 1) return false;
+  return true;
+}
+function groundDigCell() {
+  // March the look ray to the ground (max 5, same reach as objects).
+  const fx = -Math.sin(P.yaw) * Math.cos(P.pitch), fy = Math.sin(P.pitch), fz = -Math.cos(P.yaw) * Math.cos(P.pitch);
+  const ex = P.pos.x, ey = P.pos.y + 1.65, ez = P.pos.z;
+  for (let d = 0.5; d <= 5; d += 0.25) {
+    const x = ex + fx * d, y = ey + fy * d, z = ez + fz * d;
+    if (y <= groundY(x, z) + 0.15) {
+      const rx = Math.round(x), rz = Math.round(z);
+      return { x: rx, z: rz, y: groundY(rx, rz) };
+    }
+  }
+  return null;
+}
+function digGround(cell, toolSlot) {
+  if (!isDiggableCell(cell.x, cell.z)) return; // never pay out on excluded ground
+  const id = digYield(cell.x, cell.z);
+  if (!addItem(id, 1)) return; // inventory full — don't wear the tool for nothing
+  damageTool(toolSlot);
+  updateHUD();
 }
 function targetLabel(t) {
   // Unmistakable affordance: the verb AND the button, per target.
@@ -908,6 +978,7 @@ function targetLabel(t) {
       return use[t.ref.itemId] || `${ITEMS[t.ref.itemId]?.name || 'Structure'} — Left click to smash`;
     }
     case 'car': return t.ref.locked ? 'Locked car' : 'Car — Right click to drive';
+    case 'ground': return `${digYieldLabel(digYield(t.x, t.z))} — Hold left click to dig`;
     case 'crop': return t.ref.stage >= 3 ? `${t.ref.seed === 'seed_wheat' ? 'Wheat' : 'Carrot'} ready — Left click to harvest` : 'Growing crop';
     default: return '';
   }
@@ -920,6 +991,7 @@ function targetBasePos(t) {
     case 'groundstone': return { x: t.ref.x, z: t.ref.z, r: 0.55 };
     case 'chest': return { x: t.ref.x, z: t.ref.z, r: 1.1 };
     case 'car': return { x: t.ref.group.position.x, z: t.ref.group.position.z, r: 2.4 };
+    case 'ground': return { x: t.x, z: t.z, r: 0.7 };
     case 'placed': return { x: t.ref.x, z: t.ref.z, r: 1.8 };
     case 'crop': return { x: t.ref.x, z: t.ref.z, r: 0.7 };
     default: return { x: t.ref.x, z: t.ref.z, r: 1.8 };
@@ -965,21 +1037,28 @@ function updateTargetPrompt() {
 // chop a tree or mine a rock. Smash/harvest/hoe stay single-click.
 let holdTimer = null, holdKind = null, holdRef = null;
 function startHoldAction() {
-  if (!target || (target.kind !== 'tree' && target.kind !== 'rock')) return;
+  if (!target || (target.kind !== 'tree' && target.kind !== 'rock' && target.kind !== 'ground')) return;
   stopHoldAction();
-  holdKind = target.kind; holdRef = target.ref;
+  holdKind = target.kind; holdRef = target.kind === 'ground' ? { x: target.x, z: target.z } : target.ref;
   const tick = () => {
-    // Still holding the SAME tree/rock, still in the world, with a
-    // valid tool? Anything else ends the hold with no progress.
-    const list = holdKind === 'tree' ? world.trees : world.rocks;
-    if (!target || target.kind !== holdKind || target.ref !== holdRef || !list.includes(holdRef)) { stopHoldAction(); return; }
-    const sel = selectedItem();
-    if (holdKind === 'tree') {
-      if (!sel || ITEMS[sel.id]?.tool !== 'axe') { stopHoldAction(); return; }
-      triggerSwing(); chopTree(target.ref, sel);
+    // Still holding the SAME tree/rock/ground cell, still in the world,
+    // with a valid tool? Anything else ends the hold with no progress.
+    if (holdKind === 'ground') {
+      if (!target || target.kind !== 'ground' || target.x !== holdRef.x || target.z !== holdRef.z) { stopHoldAction(); return; }
+      const sel = selectedItem();
+      if (!sel || ITEMS[sel.id]?.tool !== 'shovel') { stopHoldAction(); return; }
+      triggerSwing(); digGround(holdRef, sel);
     } else {
-      if (!sel || ITEMS[sel.id]?.tool !== 'pickaxe') { stopHoldAction(); return; }
-      triggerSwing(); mineRock(target.ref, sel);
+      const list = holdKind === 'tree' ? world.trees : world.rocks;
+      if (!target || target.kind !== holdKind || target.ref !== holdRef || !list.includes(holdRef)) { stopHoldAction(); return; }
+      const sel = selectedItem();
+      if (holdKind === 'tree') {
+        if (!sel || ITEMS[sel.id]?.tool !== 'axe') { stopHoldAction(); return; }
+        triggerSwing(); chopTree(target.ref, sel);
+      } else {
+        if (!sel || ITEMS[sel.id]?.tool !== 'pickaxe') { stopHoldAction(); return; }
+        triggerSwing(); mineRock(target.ref, sel);
+      }
     }
     holdTimer = setTimeout(tick, 420); // repeat swings while held
   };
@@ -994,6 +1073,7 @@ function stopHoldAction() {
 function onPrimaryAction() {
   if (buildMode) { placeGhostPiece(); return; }
   if (!target) return;
+  if (target.kind === 'ground') return; // digging is hold-only, like chop/mine
   const sel = selectedItem();
   // Left click never interacts (no chests, benches, shops, cars) and
   // never triggers car-key/jerrycan use — that is all right-click.
@@ -1582,6 +1662,13 @@ function updateGhost() {
     scene.add(ghost);
   }
   ghost.position.set(x, y, z);
+  // Pieces face the player: every piece model's front is its +z local
+  // side (door knob/hinges, chest latch, workbench front apron, house
+  // doorknob all sit at +z), and rotation.y = yaw maps local +z to
+  // (sin yaw, 0, cos yaw) — exactly toward the player, since the player
+  // looks along (-sin yaw, -cos yaw). So the ghost's front always
+  // faces the player, tracking as they turn.
+  ghost.rotation.y = P.yaw;
   const ok = ghostValid(x, z);
   // Ghost is see-through in the piece's own natural colors — no green
   // tint. Only an invalid spot tints red, so you can still tell at a
@@ -1595,8 +1682,9 @@ function placeGhostPiece() {
   if (!removeCount(buildSel, 1)) { toast('Out of that piece.'); return; }
   const mesh = buildPieceMesh(buildSel);
   mesh.position.set(x, y, z);
+  mesh.rotation.y = P.yaw; // placed piece keeps the ghost's facing: front toward the player
   scene.add(mesh);
-  const rec = { itemId: buildSel, x, z, y, rotY: 0, color: (buildSel.startsWith('wall_') ? PIECE_COLORS[buildSel.slice(5)] : null) || paintColor, mesh, contents: buildSel === 'chest' ? [] : undefined };
+  const rec = { itemId: buildSel, x, z, y, rotY: P.yaw, color: (buildSel.startsWith('wall_') ? PIECE_COLORS[buildSel.slice(5)] : null) || paintColor, mesh, contents: buildSel === 'chest' ? [] : undefined };
   placed.push(rec);
   if (buildSel === 'house') chatMsg('System', 'House placed! Your land is home.', true);
   updateHUD(); renderBuildBar(); saveGame();
@@ -2221,7 +2309,7 @@ function saveGame() {
   save('somewhere_save_' + W.id, {
     inv: P.inv, hotbar: P.hotbar, perm: P.perm, money: P.money, hp: P.hp, hunger: P.hunger,
     hasBackpack: P.hasBackpack, landOwned: P.landOwned,
-    placed: placed.map((p) => ({ itemId: p.itemId, x: p.x, z: p.z, y: p.y, color: p.color, contents: p.contents })),
+    placed: placed.map((p) => ({ itemId: p.itemId, x: p.x, z: p.z, y: p.y, rotY: p.rotY || 0, color: p.color, contents: p.contents })),
     crops: crops.filter((c) => c.seed).map((c) => ({ x: c.x, z: c.z, seed: c.seed, planted: c.planted })),
     // Loot chest states, matched back by position on load (chest
     // placement is deterministic per seed, so positions are stable).
@@ -2241,6 +2329,7 @@ function loadSave() {
   for (const p of s.placed || []) {
     const mesh = buildPieceMesh(p.itemId, p.color);
     mesh.position.set(p.x, p.y, p.z);
+    mesh.rotation.y = p.rotY || 0; // saves from before facing shipped default to 0, as before
     scene.add(mesh);
     placed.push({ ...p, mesh, contents: p.contents || (p.itemId === 'chest' ? [] : undefined) });
   }
@@ -2302,12 +2391,17 @@ window.__debug = {
   get P() { return P; },
   get world() { return world; },
   get placed() { return placed; },
+  get ghostRot() { return ghost ? ghost.rotation.y : null; },
+  get ghostValid() { return ghost ? !!ghost.userData.valid : null; },
   get cars() { return cars; },
   get target() { return target; },
   addItem, countOf, selectedItem,
   get selSlot() { return selSlot; },
   doPrimary: () => onPrimaryAction(),
   doInteract: () => doInteract(),
+  save: () => saveGame(),
+  hold: () => startHoldAction(),
+  holding: () => holdTimer !== null,
   openLoot: (c) => openLootChest(c, 'key'),
   openStore: (p) => openStorage(p, 'key'),
   place: () => placeGhostPiece(),
