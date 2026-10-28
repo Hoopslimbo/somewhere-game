@@ -1,15 +1,14 @@
 /* ==================================================================
-   SOMEWHERE — UI REMAKE (Fortnite-inspired design system)
-   Bold, angular, chunky, vibrant. Pure visuals: every selector below
-   matches the pre-remake stylesheet, so no HTML/JS behaviour, label,
-   slot count, or mechanic changes. Panels use cut corners via
-   clip-path + drop-shadow filters (box-shadow would be clipped).
+   SOMEWHERE — clean design system
+   Soft rounded panels, gentle soft shadows, clean type, restrained
+   sky-blue accent. Pure visuals: no HTML/JS behaviour, label,
+   slot count, or mechanic changes.
    ================================================================== */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
   --bg: #0a0e1e; --panel: rgba(12, 17, 36, .94); --panel2: rgba(22, 30, 60, .94);
   --line: #2b3c6e; --edge: #070b18; --text: #ffffff; --dim: #aeb9d6;
-  --accent: #00b2ff; --gold: #ffc800; --gold2: #ff9d00; --green: #57e32e;
+  --accent: #00b2ff; --green: #57e32e;
   --sky: #8ec9ff; --sky-soft: rgba(142,201,255,.18); --sky-line: rgba(142,201,255,.55);
   --red: #ff3b47; --purple: #8b5cf6; --orange: #ff7a1a;
   --shadow: 0 18px 0 rgba(0,0,0,.35);
@@ -29,14 +28,14 @@ h1, h3, h4 { font-family: var(--display); font-weight: 900; text-transform: uppe
 
 /* ---------- Inputs ---------- */
 input, select { font: inherit; font-weight: 600; background: #0b1226; color: var(--text); border: 2px solid var(--line); clip-path: var(--cut-sm); padding: 9px 12px; transition: border-color var(--ease), box-shadow var(--ease); }
-input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 3px rgba(255,200,0,.35); }
-input[type=range], input[type=checkbox] { accent-color: var(--gold); }
+input:focus, select:focus { outline: none; border-color: var(--sky-line); box-shadow: 0 0 0 3px rgba(142,201,255,.25); }
+input[type=range], input[type=checkbox] { accent-color: var(--sky); }
 
 /* ---------- Buttons: chunky, slanted, hard-shadowed ---------- */
 .btn { border: 3px solid var(--edge); background: linear-gradient(180deg, #31457e, #1b2547); color: var(--text); clip-path: var(--slant); padding: 10px 22px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px; filter: drop-shadow(0 4px 0 rgba(0,0,0,.55)); transition: transform var(--ease), filter var(--ease); }
 .btn:hover { transform: translateY(-2px) skewX(-1deg); filter: drop-shadow(0 6px 0 rgba(0,0,0,.55)) brightness(1.15); }
 .btn:active { transform: translateY(2px); filter: drop-shadow(0 1px 0 rgba(0,0,0,.55)); }
-.btn.primary { background: linear-gradient(180deg, #ffe14d, var(--gold) 55%, var(--gold2)); color: #141a2e; }
+.btn.primary { background: var(--sky); color: #0b1226; }
 .btn.ghost { background: rgba(0,0,0,.35); border-color: rgba(255,255,255,.55); color: var(--text); }
 .btn.big { padding: 14px 30px; font-size: 18px; }
 .btn.small { padding: 7px 14px; font-size: 13px; }
@@ -46,16 +45,26 @@ input[type=range], input[type=checkbox] { accent-color: var(--gold); }
 #auth-screen { display: flex; align-items: center; justify-content: center;
   background-image: repeating-linear-gradient(-45deg, rgba(255,255,255,.045) 0 26px, transparent 26px 52px),
     linear-gradient(135deg, #123a8f 0%, #3b2bbf 48%, #7b1fa2 75%, #0a0e1e 100%); }
-.auth-card { width: min(450px, 92vw); background: var(--panel); border: 3px solid var(--edge); clip-path: var(--cut); padding: 30px 28px; display: flex; flex-direction: column; gap: 13px; filter: drop-shadow(8px 8px 0 rgba(0,0,0,.5)); }
-.auth-card h1 { text-align: center; font-size: 46px; letter-spacing: 1px; color: #fff; text-shadow: 3px 3px 0 var(--accent), 7px 7px 0 rgba(0,0,0,.6); }
-.tagline { text-align: center; color: #ffe14d; margin-top: -8px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; font-size: 13px; text-shadow: 2px 2px 0 rgba(0,0,0,.6); }
-.auth-tabs { display: flex; gap: 10px; }
-.auth-tab { flex: 1; padding: 10px; clip-path: var(--slant); border: 3px solid var(--edge); background: rgba(0,0,0,.4); color: var(--text); font-weight: 800; text-transform: uppercase; letter-spacing: .4px; }
-.auth-tab.active { background: linear-gradient(180deg, #ffe14d, var(--gold)); color: #141a2e; }
-.auth-card label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; }
+.auth-card { width: min(450px, 92vw); background: rgba(10,15,32,.92); border: 1px solid rgba(255,255,255,.12); border-radius: 20px; padding: 30px 28px; display: flex; flex-direction: column; gap: 13px; box-shadow: 0 24px 64px rgba(0,0,0,.5); backdrop-filter: blur(16px); }
+.auth-card h1 { text-align: center; font-family: inherit; font-size: 40px; font-weight: 800; letter-spacing: 0; color: #fff; text-shadow: none; text-transform: none; font-style: normal; }
+.tagline { text-align: center; color: rgba(255,255,255,.75); margin-top: -8px; font-weight: 600; text-transform: none; letter-spacing: .2px; font-size: 14px; text-shadow: none; }
+.auth-tabs { display: flex; gap: 0; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08); border-radius: 999px; padding: 5px; }
+.auth-tab { flex: 1; padding: 9px 20px; border-radius: 999px; border: 1px solid transparent; background: transparent; color: rgba(255,255,255,.75); font-weight: 600; text-transform: none; letter-spacing: 0; font-size: 15px; }
+.auth-tab.active { background: #fff; color: #0b1226; box-shadow: 0 4px 14px rgba(0,0,0,.35); }
+.auth-card label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; font-weight: 600; text-transform: none; letter-spacing: 0; }
 .auth-card label .hint { font-weight: 600; color: var(--dim); text-transform: none; letter-spacing: 0; }
-.auth-error { background: rgba(255,59,71,.18); border: 3px solid var(--red); color: #ffb3b3; padding: 10px 13px; clip-path: var(--cut-sm); font-size: 14px; font-weight: 700; }
-.pfp-preview { width: 76px; height: 76px; clip-path: var(--cut-sm); object-fit: cover; align-self: center; border: 3px solid var(--gold); }
+.auth-error { background: rgba(255,59,71,.18); border: 1px solid var(--red); border-radius: 12px; color: #ffb3b3; padding: 10px 13px; font-size: 14px; font-weight: 600; }
+.pfp-preview { width: 76px; height: 76px; border-radius: 50%; object-fit: cover; align-self: center; border: 2px solid rgba(255,255,255,.25); background: #223; }
+
+/* ---------- Auth buttons + inputs: clean, matching the lobby ---------- */
+#auth-screen .btn { border-radius: 12px; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.08); color: var(--text); font-weight: 600; text-transform: none; letter-spacing: 0; clip-path: none; filter: none; box-shadow: none; padding: 10px 20px; }
+#auth-screen .btn:hover { transform: translateY(-1px); filter: none; background: rgba(255,255,255,.14); box-shadow: 0 6px 18px rgba(0,0,0,.30); }
+#auth-screen .btn:active { transform: translateY(0); filter: none; box-shadow: none; }
+#auth-screen .btn.primary { background: var(--sky); color: #0b1226; border-color: transparent; }
+#auth-screen .btn.primary:hover { background: #a8d4ff; }
+#auth-screen .btn.ghost { background: transparent; border-color: rgba(255,255,255,.20); }
+#auth-screen .btn.big { border-radius: 14px; padding: 14px 28px; font-size: 16px; }
+#auth-screen input, #auth-screen select { border-radius: 12px; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06); clip-path: none; font-weight: 500; }
 
 /* ---------- Lobby ---------- */
 /* Fixed lobby: header, hero (character + friends), and tabs NEVER
@@ -99,7 +108,7 @@ input[type=range], input[type=checkbox] { accent-color: var(--gold); }
 .lobby-bottom::-webkit-scrollbar, .friends-panel::-webkit-scrollbar { width: 10px; }
 .lobby-bottom::-webkit-scrollbar-thumb, .friends-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,.22); border-radius: 999px; }
 .craft-list::-webkit-scrollbar { width: 10px; }
-.craft-list::-webkit-scrollbar-thumb { background: linear-gradient(var(--gold), var(--gold2)); border: 2px solid var(--edge); }
+.craft-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,.22); border: 2px solid var(--edge); }
 .servers-head { margin-top: 20px; }
 /* Netflix-style browse rows: horizontal scroll, big visual cards */
 .world-row { display: flex; gap: 18px; overflow-x: auto; padding: 14px 4px 20px; scroll-snap-type: x proximity; scrollbar-width: thin; }
@@ -159,8 +168,8 @@ input[type=range], input[type=checkbox] { accent-color: var(--gold); }
 .vignette { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 120px rgba(0,0,0,.35); }
 #crosshair { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font-size: 26px; font-weight: 900; color: #fff; text-shadow: 2px 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000; pointer-events: none; transition: color var(--ease), transform var(--ease); }
 #crosshair.target { color: var(--green); transform: translate(-50%, -50%) scale(1.4); text-shadow: 2px 2px 0 #000, 0 0 12px rgba(87,227,46,.9); }
-.prompt { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); background: rgba(6,9,22,.85); border: 3px solid var(--gold); clip-path: var(--cut-sm); padding: 10px 20px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px; filter: drop-shadow(4px 4px 0 rgba(0,0,0,.5)); }
-.center-toast { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); font-family: var(--display); font-size: 30px; font-weight: 900; font-style: italic; text-transform: uppercase; letter-spacing: 1px; color: var(--gold); text-shadow: 3px 3px 0 var(--accent), 6px 6px 0 rgba(0,0,0,.6); background: rgba(0,0,0,.35); padding: 12px 26px; clip-path: var(--cut-sm); }
+.prompt { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); background: rgba(6,9,22,.85); border: 3px solid var(--sky-line); clip-path: var(--cut-sm); padding: 10px 20px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px; filter: drop-shadow(4px 4px 0 rgba(0,0,0,.5)); }
+.center-toast { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); font-family: var(--display); font-size: 30px; font-weight: 900; font-style: italic; text-transform: uppercase; letter-spacing: 1px; color: #fff; text-shadow: 3px 3px 0 var(--accent), 6px 6px 0 rgba(0,0,0,.6); background: rgba(0,0,0,.35); padding: 12px 26px; clip-path: var(--cut-sm); }
 .hud-top { position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: flex-end; padding: 14px 18px; pointer-events: none; }
 /* Health + hunger, BOTTOM LEFT (round 3 put them right — wrong) */
 .vitals-bl { position: absolute; left: 18px; bottom: 118px; display: flex; flex-direction: column; gap: 8px; background: rgba(6,9,22,.8); border: 3px solid var(--edge); clip-path: var(--cut); padding: 12px 14px; filter: drop-shadow(5px 5px 0 rgba(0,0,0,.5)); z-index: 5; }
@@ -170,35 +179,35 @@ input[type=range], input[type=checkbox] { accent-color: var(--gold); }
 .bar.small { width: 110px; height: 12px; }
 .fill { height: 100%; transition: width .25s; }
 .fill.health { background: repeating-linear-gradient(45deg, rgba(255,255,255,.28) 0 7px, transparent 7px 14px), linear-gradient(90deg, #ff3b47, #ff7a5c); }
-.fill.hunger { background: repeating-linear-gradient(45deg, rgba(255,255,255,.28) 0 7px, transparent 7px 14px), linear-gradient(90deg, var(--gold2), var(--gold)); }
+.fill.hunger { background: repeating-linear-gradient(45deg, rgba(255,255,255,.28) 0 7px, transparent 7px 14px), linear-gradient(90deg, #ff7a5c, #ff8a5c); }
 .fill.fuel { background: repeating-linear-gradient(45deg, rgba(255,255,255,.28) 0 7px, transparent 7px 14px), linear-gradient(90deg, #00c2ff, var(--accent)); }
 .hud-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; font-weight: 800; text-shadow: 2px 2px 0 #000; }
-.money { color: var(--gold); font-family: var(--display); font-size: 18px; letter-spacing: .5px; }
+.money { color: #fff; font-family: var(--display); font-size: 18px; letter-spacing: .5px; }
 .chat-box { position: absolute; left: 18px; bottom: 212px; width: 380px; max-width: 60vw; pointer-events: none; }
 #chat-log { display: flex; flex-direction: column; gap: 4px; max-height: 170px; overflow: hidden; font-size: 14px; font-weight: 600; }
 .chat-msg { background: rgba(6,9,22,.7); border-left: 4px solid var(--accent); clip-path: var(--cut-sm); padding: 6px 12px; width: fit-content; max-width: 100%; text-shadow: 1px 1px 2px #000; }
 .chat-msg b { color: var(--accent); }
-.chat-msg.sys b { color: var(--gold); }
-.chat-msg.sys { border-left-color: var(--gold); }
+.chat-msg.sys b { color: var(--sky); }
+.chat-msg.sys { border-left-color: var(--sky); }
 #chat-input { pointer-events: auto; width: 100%; margin-top: 6px; background: rgba(6,9,22,.85); }
 .toast { position: absolute; left: 50%; bottom: 330px; transform: translateX(-50%); background: rgba(6,9,22,.85); border: 3px solid var(--edge); clip-path: var(--cut-sm); padding: 10px 20px; font-weight: 800; text-transform: uppercase; letter-spacing: .3px; max-width: 80vw; text-align: center; filter: drop-shadow(4px 4px 0 rgba(0,0,0,.5)); }
 .help-panel { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: var(--panel); border: 3px solid var(--edge); clip-path: var(--cut); padding: 24px 28px; max-width: 540px; line-height: 1.8; font-size: 15px; font-weight: 600; z-index: 20; filter: drop-shadow(8px 8px 0 rgba(0,0,0,.55)); }
-.help-panel h3 { color: var(--gold); margin-bottom: 8px; }
+.help-panel h3 { color: #fff; margin-bottom: 8px; }
 .hud-bottom { position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; gap: 10px; padding-bottom: 14px; pointer-events: none; }
 .hud-bottom > * { pointer-events: auto; }
 .hotbar { display: flex; gap: 7px; }
 .slot { width: 56px; height: 56px; clip-path: var(--cut-sm); border: 3px solid rgba(255,255,255,.35); background: rgba(6,9,22,.7); display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; filter: drop-shadow(3px 3px 0 rgba(0,0,0,.5)); transition: transform var(--ease), filter var(--ease); }
 /* Hotbar slots are wider/taller so full item names fit on two lines */
 .hotbar .slot { width: 68px; height: 86px; }
-.slot.sel { border-color: var(--gold); filter: drop-shadow(3px 3px 0 rgba(0,0,0,.5)) drop-shadow(0 0 14px rgba(255,200,0,.6)); transform: translateY(-4px); }
-.slot.perm { border-style: dashed; border-color: rgba(255,200,0,.85); }
+.slot.sel { border-color: var(--sky-line); filter: drop-shadow(3px 3px 0 rgba(0,0,0,.5)) drop-shadow(0 0 14px rgba(142,201,255,.25)); transform: translateY(-4px); }
+.slot.perm { border-style: dashed; border-color: rgba(142,201,255,.7); }
 /* Icons sit directly in the slot box — no inner tile/background box behind them.
    The SVG gets a soft drop-shadow instead so dark-outlined icons still read on the dark slot. */
 .slot .ic { line-height: 1; width: 42px; height: 42px; display: inline-flex; align-items: center; justify-content: center; background: none; border: none; box-shadow: none; }
 .slot .ic svg.di { filter: drop-shadow(0 1px 2px rgba(0,0,0,.6)); }
 .craft-row .ic.sm { line-height: 1; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; background: none; border: none; box-shadow: none; margin-right: 2px; }
 .craft-row .ic.sm svg.di { filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
-.slot .cnt { font-size: 13px; font-weight: 900; position: absolute; right: 5px; top: 3px; color: var(--gold); text-shadow: 2px 2px 0 #000; }
+.slot .cnt { font-size: 13px; font-weight: 900; position: absolute; right: 5px; top: 3px; color: #fff; text-shadow: 2px 2px 0 #000; }
 .slot .key { font-size: 11px; position: absolute; left: 5px; top: 3px; color: var(--dim); font-weight: 800; }
 .slot .dur { position: absolute; left: 4px; right: 4px; bottom: 4px; height: 4px; background: rgba(255,255,255,.2); overflow: hidden; }
 .slot .dur i { display: block; height: 100%; background: var(--green); }
@@ -208,7 +217,7 @@ input[type=range], input[type=checkbox] { accent-color: var(--gold); }
 .slot .lbl { font-size: 10px; line-height: 1.15; color: var(--text); font-weight: 700; text-align: center; max-width: 100%; padding: 3px 2px 0; overflow-wrap: break-word; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .inv-panel { width: min(740px, 94vw); background: var(--panel); border: 3px solid var(--edge); clip-path: var(--cut); padding: 18px; filter: drop-shadow(6px 6px 0 rgba(0,0,0,.5)); }
 .inv-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.inv-head h3 { color: var(--gold); }
+.inv-head h3 { color: #fff; }
 .inv-grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 7px; }
 .inv-grid .slot { width: 100%; height: auto; min-height: 88px; padding: 6px 2px 10px; }
 .inv-actions { display: flex; gap: 9px; margin-top: 13px; }
@@ -219,9 +228,9 @@ input[type=range], input[type=checkbox] { accent-color: var(--gold); }
 .build-bar { display: flex; gap: 9px; background: rgba(6,9,22,.75); border: 3px solid var(--edge); clip-path: var(--cut-sm); padding: 9px; flex-wrap: wrap; justify-content: center; max-width: 94vw; filter: drop-shadow(4px 4px 0 rgba(0,0,0,.5)); }
 .build-bar button { padding: 8px 15px; clip-path: var(--slant); border: 2px solid var(--edge); background: var(--panel2); color: var(--text); font-weight: 800; text-transform: uppercase; letter-spacing: .3px; font-size: 13px; transition: transform var(--ease), filter var(--ease); }
 .build-bar button:hover { filter: brightness(1.25); transform: translateY(-1px); }
-.build-bar button.sel { background: linear-gradient(180deg, #ffe14d, var(--gold)); color: #141a2e; }
+.build-bar button.sel { background: var(--sky); color: #0b1226; }
 .shop-panel { width: min(520px, 94vw); background: var(--panel); border: 3px solid var(--edge); clip-path: var(--cut); padding: 18px; filter: drop-shadow(6px 6px 0 rgba(0,0,0,.5)); }
-.shop-panel h3 { margin-bottom: 10px; color: var(--gold); }
+.shop-panel h3 { margin-bottom: 10px; color: #fff; }
 #error-overlay { position: fixed; inset: auto 0 0 0; background: #5a1010; color: #fff; padding: 10px 16px; font: 13px monospace; z-index: 100; white-space: pre-wrap; }
 @media (max-width: 900px) {
   .friends-panel { display: none; }
@@ -243,7 +252,7 @@ input[type=range], input[type=checkbox] { accent-color: var(--gold); }
 /* ---------- In-game redo: clean, smooth (game-scoped overrides) ----------
    Same clean tone as the lobby redo: soft rounded corners, gentle soft
    shadows, generous spacing, clean type, restrained sky accent, NO
-   yellow/gold. Lobby and auth styling untouched. */
+   yellow/gold. Lobby styling untouched; auth cleaned in its own section. */
 #game-screen h3, #game-screen h4 { font-family: inherit; font-weight: 700; text-transform: none; font-style: normal; letter-spacing: 0; text-shadow: none; }
 #game-screen .btn { border-radius: 12px; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.08); color: var(--text); font-weight: 600; text-transform: none; letter-spacing: 0; clip-path: none; filter: none; box-shadow: none; padding: 10px 20px; }
 #game-screen .btn:hover { transform: translateY(-1px); filter: none; background: rgba(255,255,255,.14); box-shadow: 0 6px 18px rgba(0,0,0,.30); }
