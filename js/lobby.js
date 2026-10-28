@@ -13,9 +13,17 @@ S.servers = load('somewhere_servers', null);
 S.friends = load('somewhere_friends', null);
 S.keybinds = { ...{ forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD', jump: 'Space', interact: 'KeyE', chat: 'KeyT', inventory: 'KeyI', build: 'KeyB', quickcraft: 'KeyQ', help: 'KeyH' }, ...load('somewhere_keybinds', {}) };
 S.settings = { brightness: 100, audio: 80, voice: 'party', ...load('somewhere_settings', {}) };
-if (!S.worlds) {
-  S.worlds = [{ id: uid(), name: 'First Island', seed: Math.floor(Math.random() * 100000), keepInv: false, friendly: true, created: Date.now() }];
-  save('somewhere_worlds', S.worlds);
+// NO seeded world: new accounts start with zero worlds and create their
+// own. Migration: drop any leftover seeded "First Island" (the old seed
+// had no userCreated flag; worlds the user actually created via the
+// dialog carry userCreated: true and are always kept).
+if (!S.worlds) { S.worlds = []; save('somewhere_worlds', S.worlds); }
+else {
+  const seeded = S.worlds.filter((w) => w.name === 'First Island' && !w.userCreated);
+  if (seeded.length) {
+    S.worlds = S.worlds.filter((w) => !(w.name === 'First Island' && !w.userCreated));
+    save('somewhere_worlds', S.worlds);
+  }
 }
 // No seeded friends, servers, or invites — everything starts EMPTY and only
 // real, user-created entries appear. Returning players get migrated: any
@@ -100,7 +108,7 @@ $('btn-signout').onclick = () => {
 };
 
 // ---------- Lobby 3D ----------
-let lobbyRenderer, panoRenderer, charRenderer, panoScene, panoCam, charScene, charCam, charGroup, lobbyRAF = null, lobbyClock = new THREE.Clock();
+let lobbyRenderer, panoRenderer, charRenderer, panoScene, panoCam, charScene, charCam, charGroup, custRenderer, custScene, custCam, custGroup, lobbyRAF = null, lobbyClock = new THREE.Clock();
 function initLobby3D() {
   if (lobbyRenderer) return;
   const bgCanvas = $('lobby-bg');
@@ -136,6 +144,24 @@ function initLobby3D() {
   charCam = new THREE.PerspectiveCamera(30, 280 / 350, 0.1, 50);
   charCam.position.set(0, 1.25, 5.2);
   charCam.lookAt(0, 1.0, 0);
+  // Customize-panel preview: its own renderer/scene, because the hero
+  // preview is hidden while a full menu tab (like Customization) is open.
+  custRenderer = new THREE.WebGLRenderer({ canvas: $('cust-canvas'), antialias: true, alpha: true });
+  custRenderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  custRenderer.setSize(280, 350);
+  custScene = new THREE.Scene();
+  custScene.add(new THREE.HemisphereLight(0xffffff, 0x3a4a5a, 0.9));
+  const cdl = new THREE.DirectionalLight(0xffffff, 1.6); cdl.position.set(2, 4, 3); custScene.add(cdl);
+  const crim = new THREE.DirectionalLight(0x9fc4ff, 0.8); crim.position.set(-3, 2, -3); custScene.add(crim);
+  const cped = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.95, 0.12, 24),
+    new THREE.MeshStandardMaterial({ color: 0x22304a, roughness: 0.9 }));
+  cped.position.y = -0.06; custScene.add(cped);
+  custCam = new THREE.PerspectiveCamera(30, 280 / 350, 0.1, 50);
+  // 3/4 angle (not straight front) so back-hair styles (ponytail, long)
+  // actually read in the preview instead of hiding behind the head.
+  custCam.position.set(2.8, 1.35, 4.3);
+  custCam.lookAt(0, 1.0, 0);
+  window.__custPreview = { get rot() { return custGroup ? custGroup.rotation.y : 0; } };
   refreshCharacter();
 }
 function refreshCharacter() {
@@ -144,6 +170,12 @@ function refreshCharacter() {
   charGroup = buildCharacter(S.char);
   charGroup.position.y = 0;
   charScene.add(charGroup);
+  if (custScene) {
+    if (custGroup) custScene.remove(custGroup);
+    custGroup = buildCharacter(S.char);
+    custGroup.position.y = 0;
+    custScene.add(custGroup);
+  }
 }
 function lobbyLoop() {
   if (!$('lobby-screen') || $('lobby-screen').classList.contains('hidden')) { lobbyRAF = null; return; }
@@ -174,6 +206,10 @@ function lobbyLoop() {
   panoRenderer.render(panoScene, panoCam);
   if (charGroup) charGroup.rotation.y = Math.sin(t * 0.35) * 0.35;
   charRenderer.render(charScene, charCam);
+  if (custScene && !$('panel-customize').classList.contains('hidden')) {
+    if (custGroup) custGroup.rotation.y = Math.sin(t * 0.35) * 0.35;
+    custRenderer.render(custScene, custCam);
+  }
   lobbyRAF = requestAnimationFrame(lobbyLoop);
 }
 function startLobbyLoop() {
@@ -189,6 +225,7 @@ function setPfp(img, name) {
   img.onerror = () => { img.src = initialAvatar(name); };
 }
 function showLobby() {
+  $('boot-loading')?.classList.add('hidden');
   $('auth-screen').classList.add('hidden');
   $('lobby-screen').classList.remove('hidden');
   $('header-username').textContent = S.session.username;
@@ -203,15 +240,48 @@ function showLobby() {
   switchTab('play');
   startLobbyLoop();
 }
+S.showLobby = showLobby; // pause menu's "Back to lobby" uses this
 // Top tabs open a NEW MENU: a full menu screen of its own that covers the
 // lobby (hero + friends hidden), with a Back button returning to Play.
+let currentTab = 'play';
 function switchTab(tab) {
+  currentTab = tab;
   document.querySelectorAll('.lobby-tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   for (const p of ['play', 'customize', 'invites', 'settings']) {
     $('panel-' + p).classList.toggle('hidden', p !== tab);
   }
   $('lobby-screen').classList.toggle('menu-open', tab !== 'play');
+  updateWorldsPanelVisibility();
 }
+// Worlds panel access: (a) it sits below the hero and the worlds area
+// scrolls (Fortnite-style), and (b) a tiny tab at the bottom of the
+// screen toggles it. Scrolling down over the lobby also re-opens it.
+let worldsCollapsed = false;
+function updateWorldsPanelVisibility() {
+  const hide = worldsCollapsed && currentTab === 'play';
+  $('lobby-bottom').classList.toggle('hidden', hide);
+  $('worlds-tab').textContent = hide ? '▴ Worlds' : '▾ Worlds';
+}
+$('worlds-tab').onclick = () => { worldsCollapsed = !worldsCollapsed; updateWorldsPanelVisibility(); };
+$('lobby-screen').addEventListener('wheel', (e) => {
+  if (worldsCollapsed && currentTab === 'play' && e.deltaY > 0) {
+    worldsCollapsed = false; updateWorldsPanelVisibility();
+  }
+}, { passive: true });
+// Worlds/Servers tabs at the TOP of the worlds panel (styled like the
+// lobby menu tabs) — no more worlds section with servers stacked below.
+let worldsView = 'worlds';
+function renderWorldsPanel() {
+  $('tab-worlds').classList.toggle('active', worldsView === 'worlds');
+  $('tab-servers').classList.toggle('active', worldsView === 'servers');
+  $('worlds-list').classList.toggle('hidden', worldsView !== 'worlds');
+  $('servers-list').classList.toggle('hidden', worldsView !== 'servers');
+  $('worlds-panel-title').textContent = worldsView === 'worlds' ? 'Your Worlds' : 'Shared Servers';
+  $('btn-new-world').classList.toggle('hidden', worldsView !== 'worlds');
+  $('btn-new-server').classList.toggle('hidden', worldsView !== 'servers');
+}
+$('tab-worlds').onclick = () => { worldsView = 'worlds'; renderWorldsPanel(); };
+$('tab-servers').onclick = () => { worldsView = 'servers'; renderWorldsPanel(); };
 document.querySelectorAll('.lobby-tab').forEach((b) => { b.onclick = () => switchTab(b.dataset.tab); });
 document.querySelectorAll('.menu-back').forEach((b) => { b.onclick = () => switchTab('play'); });
 
@@ -266,9 +336,12 @@ function fmtLastPlayed(ts) {
   if (days < 30) return `Played ${days}d ago`;
   return 'Played ' + d.toLocaleDateString();
 }
-function makeWorldCard({ title, icon, lines, artSeed, selected, onSelect }) {
-  const card = document.createElement('button');
+function makeWorldCard({ title, icon, lines, artSeed, selected, onSelect, menuItems }) {
+  // A div, not a button: the card carries its own "…" menu button, and
+  // buttons may not nest inside buttons.
+  const card = document.createElement('div');
   card.className = 'world-card' + (selected ? ' selected' : '');
+  card.tabIndex = 0;
   const art = document.createElement('canvas');
   art.className = 'card-art'; art.width = 240; art.height = 128;
   drawCardArt(art, artSeed);
@@ -279,8 +352,104 @@ function makeWorldCard({ title, icon, lines, artSeed, selected, onSelect }) {
   if (selected) info.innerHTML += '<span class="card-selected">✓ Selected — hit Play below</span>';
   card.appendChild(info);
   card.onclick = onSelect;
+  if (menuItems && menuItems.length) {
+    const wrap = document.createElement('div');
+    wrap.className = 'card-menu';
+    const btn = document.createElement('button');
+    btn.className = 'card-menu-btn';
+    btn.textContent = '⋯';
+    btn.title = 'More options';
+    btn.onclick = (e) => { e.stopPropagation(); openCardMenu(btn, menuItems); };
+    wrap.appendChild(btn);
+    card.appendChild(wrap);
+  }
   return card;
 }
+// ---------- Shared card "…" popover (position:fixed at body level, so no
+// panel/row overflow clipping can cut it off; flips up near the viewport bottom)
+function openCardMenu(btn, menuItems) {
+  const pop = $('card-menu-popover');
+  pop.innerHTML = '';
+  for (const item of menuItems) {
+    const mi = document.createElement('button');
+    mi.className = 'card-menu-item' + (item.danger ? ' danger' : '');
+    mi.textContent = item.label;
+    mi.onclick = (e) => { e.stopPropagation(); pop.classList.remove('open'); item.action(); };
+    pop.appendChild(mi);
+  }
+  pop.classList.add('open');
+  const r = btn.getBoundingClientRect();
+  pop.style.left = Math.max(8, Math.min(r.right - 170, window.innerWidth - 180)) + 'px';
+  pop.style.top = (r.bottom + 4) + 'px';
+  const pr = pop.getBoundingClientRect();
+  if (pr.bottom > window.innerHeight - 8) pop.style.top = Math.max(8, r.top - pr.height - 4) + 'px';
+}
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.card-menu') && !e.target.closest('#card-menu-popover')) {
+    $('card-menu-popover').classList.remove('open');
+  }
+});
+// ---------- Card "…" menus: delete (with confirm), rename, settings, leave ----------
+function clearSelectionIf(id) {
+  if (S.selectedWorld === id || S.selectedServer === id) {
+    S.selectedWorld = null; S.selectedServer = null;
+    $('btn-play').classList.add('hidden');
+    $('selected-world-label').textContent = '';
+  }
+}
+let confirmCb = null;
+function askConfirm(title, text, okLabel, cb) {
+  $('confirm-title').textContent = title;
+  $('confirm-text').textContent = text;
+  $('confirm-ok').textContent = okLabel;
+  confirmCb = cb;
+  $('confirm-dialog').classList.remove('hidden');
+}
+$('confirm-cancel').onclick = () => { $('confirm-dialog').classList.add('hidden'); confirmCb = null; };
+$('confirm-ok').onclick = () => {
+  $('confirm-dialog').classList.add('hidden');
+  const cb = confirmCb; confirmCb = null;
+  if (cb) cb();
+};
+let renameTarget = null; // { kind: 'world'|'server', entry }
+function openRename(entry, kind) {
+  renameTarget = { entry, kind };
+  $('rename-title').textContent = kind === 'world' ? 'Rename world' : 'Rename server';
+  $('rename-input').value = entry.name;
+  $('rename-dialog').classList.remove('hidden');
+  $('rename-input').focus();
+}
+$('rename-cancel').onclick = () => { $('rename-dialog').classList.add('hidden'); renameTarget = null; };
+$('rename-save').onclick = () => {
+  const v = $('rename-input').value.trim();
+  if (!v || !renameTarget) return;
+  if (hasBadWord(v)) { alert('That name contains a blocked word.'); return; }
+  renameTarget.entry.name = v;
+  if (renameTarget.kind === 'world') save('somewhere_worlds', S.worlds);
+  else save('somewhere_servers', S.servers);
+  $('rename-dialog').classList.add('hidden');
+  renameTarget = null;
+  renderWorlds(); renderServers();
+};
+let settingsTarget = null; // { kind, entry }
+function openCardSettings(entry, kind) {
+  settingsTarget = { entry, kind };
+  $('card-settings-title').textContent = kind === 'world' ? 'World settings' : 'Server settings';
+  $('card-keepinv').checked = !!entry.keepInv;
+  $('card-friendly').checked = entry.friendly !== false;
+  $('card-settings-dialog').classList.remove('hidden');
+}
+$('card-settings-cancel').onclick = () => { $('card-settings-dialog').classList.add('hidden'); settingsTarget = null; };
+$('card-settings-save').onclick = () => {
+  if (!settingsTarget) return;
+  settingsTarget.entry.keepInv = $('card-keepinv').checked;
+  settingsTarget.entry.friendly = $('card-friendly').checked;
+  if (settingsTarget.kind === 'world') save('somewhere_worlds', S.worlds);
+  else save('somewhere_servers', S.servers);
+  $('card-settings-dialog').classList.add('hidden');
+  settingsTarget = null;
+  renderWorlds(); renderServers();
+};
 function selectWorld(w) {
   S.selectedWorld = w.id; S.selectedServer = null;
   renderWorlds(); renderServers();
@@ -306,22 +475,67 @@ function renderWorlds() {
         fmtLastPlayed(w.lastPlayed),
       ],
       onSelect: () => selectWorld(w),
+      menuItems: [
+        { label: 'Rename world', action: () => openRename(w, 'world') },
+        { label: 'World settings', action: () => openCardSettings(w, 'world') },
+        {
+          label: 'Delete world', danger: true,
+          action: () => askConfirm('Delete world?', `"${w.name}" will be gone for good.`, 'Delete', () => {
+            S.worlds = S.worlds.filter((x) => x.id !== w.id);
+            save('somewhere_worlds', S.worlds);
+            clearSelectionIf(w.id);
+            renderWorlds();
+          }),
+        },
+      ],
     }));
   }
   if (!S.worlds.length) {
     const empty = document.createElement('p');
     empty.className = 'world-empty';
-    empty.textContent = 'No worlds yet — hit + New world up top.';
+    empty.textContent = 'No worlds yet — hit + New world up top to create your first island.';
     list.appendChild(empty);
   }
+  renderWorldsPanel();
 }
 function renderServers() {
   const list = $('servers-list');
   list.innerHTML = '';
   for (const s of S.servers) {
+    // Ownership: servers created in the dialog carry owner = creator.
+    // Old saves predate the flag — those servers were created by the
+    // current user (invites never produced real servers before), so
+    // default them to the current user.
+    const mine = !s.owner || (S.session && s.owner === S.session.username);
     const members = s.members || (1 + (s.invited ? s.invited.length : 0));
+    const menuItems = [];
+    if (mine) {
+      menuItems.push(
+        { label: 'Rename server', action: () => openRename(s, 'server') },
+        { label: 'Server settings', action: () => openCardSettings(s, 'server') },
+        {
+          label: 'Delete server', danger: true,
+          action: () => askConfirm('Delete server?', `"${s.name}" will be gone for good.`, 'Delete', () => {
+            S.servers = S.servers.filter((x) => x.id !== s.id);
+            save('somewhere_servers', S.servers);
+            clearSelectionIf(s.id);
+            renderServers();
+          }),
+        },
+      );
+    }
+    // Leave is always available on servers, owner or not.
+    menuItems.push({
+      label: 'Leave server',
+      action: () => askConfirm('Leave server?', `You will leave "${s.name}".`, 'Leave', () => {
+        S.servers = S.servers.filter((x) => x.id !== s.id);
+        save('somewhere_servers', S.servers);
+        clearSelectionIf(s.id);
+        renderServers();
+      }),
+    });
     list.appendChild(makeWorldCard({
-      title: s.name, icon: uiIcon('server'), artSeed: 777 + s.name.length * 131,
+      title: s.name, icon: uiIcon('server'), artSeed: s.seed || 777,
       selected: S.selectedServer === s.id,
       lines: [
         `Private server · Up to 20 members`,
@@ -329,6 +543,7 @@ function renderServers() {
         s.invited && s.invited.length ? `Invited: ${s.invited.join(', ')}` : 'Hop in anytime',
       ],
       onSelect: () => selectServer(s),
+      menuItems,
     }));
   }
   if (!S.servers.length) {
@@ -337,6 +552,7 @@ function renderServers() {
     empty.textContent = 'No servers yet — hit + New server up top.';
     list.appendChild(empty);
   }
+  renderWorldsPanel();
 }
 // The + buttons live at the TOP RIGHT of each section (Liam's design) —
 // NOT as cards inside the rows.
@@ -350,6 +566,27 @@ function openWorldDialog(isServer) {
   dialogIsServer = isServer;
   $('world-dialog-title').textContent = isServer ? 'Create a server' : 'Create a world';
   $('server-invite-row').classList.toggle('hidden', !isServer);
+  if (isServer) {
+    // Pre-invites are picked from a scrollable friends list — no
+    // username typing. Empty state when there are no friends yet.
+    const box = $('server-invite-list');
+    box.innerHTML = '';
+    if (!S.friends.length) {
+      const empty = document.createElement('p');
+      empty.className = 'fine';
+      empty.textContent = 'No friends yet — add friends first, or create the server and invite people later.';
+      box.appendChild(empty);
+    }
+    for (const f of S.friends) {
+      const label = document.createElement('label');
+      label.className = 'invite-pick';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.value = f.name;
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(' ' + f.name));
+      box.appendChild(label);
+    }
+  }
   $('world-name').value = '';
   $('world-keepinv').checked = false;
   $('world-friendly').checked = true;
@@ -360,12 +597,16 @@ $('world-cancel').onclick = () => $('world-dialog').classList.add('hidden');
 $('world-create').onclick = () => {
   const name = $('world-name').value.trim() || (dialogIsServer ? 'New server' : 'New world');
   if (hasBadWord(name)) { alert('That name contains a blocked word.'); return; }
-  const seed = Math.floor(Math.random() * 100000);
+  // Full-range random seed per world/server: same-length names (or any
+  // two worlds) must never silently share a seed — that was one way
+  // islands came out identical.
+  const seed = Math.floor(Math.random() * 2147483647);
   if (dialogIsServer) {
-    S.servers.push({ id: uid(), name, members: 1, invited: $('server-invites').value.split(',').map((s) => s.trim()).filter(Boolean) });
+    const invited = [...document.querySelectorAll('#server-invite-list input:checked')].map((cb) => cb.value);
+    S.servers.push({ id: uid(), name, seed, members: 1, invited, owner: S.session ? S.session.username : '', keepInv: false, friendly: true });
     save('somewhere_servers', S.servers); renderServers();
   } else {
-    S.worlds.push({ id: uid(), name, seed, keepInv: $('world-keepinv').checked, friendly: $('world-friendly').checked, created: Date.now() });
+    S.worlds.push({ id: uid(), name, seed, keepInv: $('world-keepinv').checked, friendly: $('world-friendly').checked, created: Date.now(), userCreated: true });
     save('somewhere_worlds', S.worlds); renderWorlds();
   }
   $('world-dialog').classList.add('hidden');
@@ -374,10 +615,16 @@ $('btn-play').onclick = () => {
   const w = S.worlds.find((x) => x.id === S.selectedWorld);
   const s = S.servers.find((x) => x.id === S.selectedServer);
   if (w) { w.lastPlayed = Date.now(); save('somewhere_worlds', S.worlds); }
-  const world = w || { id: s.id, name: s.name, seed: 777 + s.name.length * 131, keepInv: false, friendly: true };
+  const world = w || { id: s.id, name: s.name, seed: s.seed ?? 777, keepInv: s.keepInv ?? false, friendly: s.friendly ?? true };
   stopLobbyLoop();
   $('lobby-screen').classList.add('hidden');
   $('game-screen').classList.remove('hidden');
+  // Pointer lock straight from the Play click: no dead state where the
+  // player can't move or look until they click again.
+  try {
+    const lk = $('game-canvas').requestPointerLock();
+    if (lk && lk.catch) lk.catch(() => {});
+  } catch { /* click-to-lock fallback still works */ }
   if (window.startGame) window.startGame(world);
   else { const iv = setInterval(() => { if (window.startGame) { clearInterval(iv); window.startGame(world); } }, 100); }
 };
@@ -431,7 +678,7 @@ function renderInvites() {
     row.querySelector('.accept')?.addEventListener('click', () => {
       save('somewhere_invites', invites.filter((x) => x.id !== inv.id));
       if (inv.server && !S.servers.some((s) => s.name === inv.server)) {
-        S.servers.push({ id: uid(), name: inv.server, members: 1, invited: [] });
+        S.servers.push({ id: uid(), name: inv.server, seed: Math.floor(Math.random() * 2147483647), members: 1, invited: [], owner: inv.from || '', keepInv: false, friendly: true });
         save('somewhere_servers', S.servers); renderServers();
       }
       renderInvites();
@@ -515,12 +762,10 @@ function applySettings() {
   document.querySelectorAll('canvas').forEach((c) => { c.style.filter = `brightness(${b}%)`; });
   $('set-brightness').value = b; $('brightness-val').textContent = b + '%';
   $('set-audio').value = S.settings.audio; $('audio-val').textContent = S.settings.audio + '%';
-  $('set-voice').value = S.settings.voice;
   renderCustomize();
 }
 $('set-brightness').oninput = (e) => { S.settings.brightness = +e.target.value; save('somewhere_settings', S.settings); applySettings(); };
 $('set-audio').oninput = (e) => { S.settings.audio = +e.target.value; $('audio-val').textContent = e.target.value + '%'; save('somewhere_settings', S.settings); };
-$('set-voice').onchange = (e) => { S.settings.voice = e.target.value; save('somewhere_settings', S.settings); };
 $('set-username').onchange = (e) => {
   const v = e.target.value.trim();
   if (!v || v.length > 15 || hasBadWord(v)) { alert('Invalid username (max 15 characters, no blocked words).'); e.target.value = S.session.username; return; }
@@ -575,5 +820,8 @@ if (params.get('autoguest') === '1') {
   showLobby();
   if (params.get('screen') === 'customize') switchTab('customize');
 } else {
+  // No session: hide the boot loader, then show auth — never a
+  // "signed out" flash before the account check finishes.
+  $('boot-loading')?.classList.add('hidden');
   $('auth-screen').classList.remove('hidden');
 }

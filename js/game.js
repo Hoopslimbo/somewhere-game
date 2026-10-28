@@ -17,6 +17,15 @@ let chatOpen = false, buildMode = false, buildSel = null, paintColor = '#8a5a2b'
 let selSlot = 0, driving = null, interacting = null;
 let chatLog = [];
 let saveTimer = 0;
+let swingStart = 0; // timestamp of the last tool swing (item-use animation)
+let swingDur = 350; // debug-overridable only; gameplay default is 350ms
+let pauseOpen = false;
+let lastForwardDown = 0, doubleTapSprint = false, forwardHeld = false;
+// How each menu was opened: { by: 'key'|'mouse', key: code|null }.
+// A menu closes on its open key ONLY if it was opened by the keyboard
+// with that same key — mouse-opened menus ignore the key.
+let invOpened = null, buildOpened = null, helpOpened = null, craftOpened = null, shopOpened = null;
+let targetRing = null;
 
 const P = {
   pos: new THREE.Vector3(), vel: new THREE.Vector3(), yaw: 0, pitch: -0.15,
@@ -38,8 +47,12 @@ function centerToast(msg, ms = 2000) {
   el._t = setTimeout(() => el.classList.add('hidden'), ms);
 }
 function chatMsg(sender, text, sys = false) {
-  const clean = sys ? text : cleanText(text);
-  chatLog.push({ sender, text: clean, sys });
+  // The bottom-left system activity feed is GONE: System narration
+  // ("+3 Wood", "Chest opened!", "Picked up…") never reaches the chat
+  // log and never pops a toast. Player chat is separate and stays.
+  if (sys) return;
+  const clean = cleanText(text);
+  chatLog.push({ sender, text: clean, sys: false });
   if (chatLog.length > 60) chatLog.shift();
   renderChat();
   if (!chatOpen) toast(`${sender}: ${clean}`, 4000);
@@ -96,10 +109,12 @@ function selectedItem() {
 }
 function damageTool(slot) {
   if (!slot || !slot.dur) return;
+  // Temp ground stones never lose durability per swing — they break
+  // only when the tree they are chopping is fully felled (see chopTree).
+  if (ITEMS[slot.id].temp) return;
   slot.dur -= 1;
   if (slot.dur <= 0) {
-    if (ITEMS[slot.id].temp) chatMsg('System', 'Your stone broke apart.', true);
-    else chatMsg('System', `Your ${ITEMS[slot.id].name.toLowerCase()} broke!`, true);
+    toast(`Your ${ITEMS[slot.id].name.toLowerCase()} broke!`);
     const arr = selSlot < 7 ? P.hotbar : P.perm;
     const idx = selSlot < 7 ? selSlot : selSlot - 7;
     arr[idx] = null;
@@ -112,6 +127,13 @@ function damageTool(slot) {
 window.startGame = function (worldDef) {
   W = worldDef;
   started = true;
+  // Fresh run state: re-entering a world (e.g. via pause → lobby →
+  // Play) must not carry stale placed pieces, cars, crops, or drops.
+  placed = []; cars = []; crops = []; drops = [];
+  driving = null; buildMode = false; chatOpen = false; pauseOpen = false;
+  $('pause-menu').classList.add('hidden');
+  $('shop-panel').classList.add('hidden');
+  $('inv-panel').classList.add('hidden');
   const params = new URLSearchParams(location.search);
   if (params.get('time') === 'night') time = 22 / 24 * 1800;
   if (params.get('time') === 'day') time = 10 / 24 * 1800;
@@ -216,7 +238,14 @@ function initScene() {
 }
 
 // ---------- Input ----------
+// Controls: LEFT click = attack / chop / mine / place. RIGHT click =
+// interact (chests, benches, shops, cars). E still interacts too.
+let inputBound = false;
 function bindInput() {
+  // Bound once: re-entering a world (pause → lobby → Play) must not
+  // stack duplicate document listeners that would double-fire keys.
+  if (inputBound) return;
+  inputBound = true;
   const kb = S.keybinds;
   document.addEventListener('keydown', (e) => {
     if (e.repeat) return;
@@ -226,12 +255,58 @@ function bindInput() {
       if (e.code === 'Escape') closeChat();
       return;
     }
-    if (e.code === kb.chat) { openChat(); return; }
-    if (e.code === kb.inventory) { toggleInventory(); return; }
-    if (e.code === kb.build) { setBuildMode(!buildMode); return; }
-    if (e.code === kb.quickcraft) { openCraft(true); return; }
-    if (e.code === kb.help) { $('help-panel').classList.toggle('hidden'); renderHelp(); return; }
-    if (e.code === kb.interact) { doInteract(); return; }
+    // Double-tap forward = sprint while forward stays held (released
+    // forward clears it — see keyup below). forwardHeld tracks the
+    // physical hold: keys[] is already true by this point in the
+    // handler, so it cannot tell a fresh tap from a hold.
+    if (e.code === kb.forward) {
+      const now = performance.now();
+      if (now - lastForwardDown < 300 && !forwardHeld) doubleTapSprint = true;
+      forwardHeld = true;
+      lastForwardDown = now;
+    }
+    if (e.code === 'Escape') {
+      if (pauseOpen) { closePause(); return; }
+      if (!$('inv-panel').classList.contains('hidden') || !$('shop-panel').classList.contains('hidden') ||
+          !$('help-panel').classList.contains('hidden') || buildMode) {
+        closePanels();
+        if (buildMode) setBuildMode(false);
+        return;
+      }
+      openPause();
+      return;
+    }
+    if (e.code === kb.chat || e.code === 'KeyC') { openChat(); return; }
+    if (e.code === kb.inventory) {
+      if (!$('inv-panel').classList.contains('hidden')) {
+        // Same-key close ONLY if the keyboard opened it with this key.
+        if (invOpened && invOpened.by === 'key' && invOpened.key === kb.inventory) toggleInventory(false);
+      } else toggleInventory(true, { by: 'key', key: kb.inventory });
+      return;
+    }
+    if (e.code === kb.build) {
+      if (buildMode) {
+        if (buildOpened && buildOpened.by === 'key' && buildOpened.key === kb.build) setBuildMode(false);
+      } else setBuildMode(true, { by: 'key', key: kb.build });
+      return;
+    }
+    if (e.code === kb.quickcraft) {
+      const list = $('craft-list');
+      if (list.innerHTML && craftOpened && craftOpened.by === 'key' && craftOpened.key === kb.quickcraft && craftOpened.quick) {
+        closePanels();
+      } else openCraft(true, { by: 'key', key: kb.quickcraft });
+      return;
+    }
+    if (e.code === kb.help) {
+      if (!$('help-panel').classList.contains('hidden')) {
+        if (helpOpened && helpOpened.by === 'key' && helpOpened.key === kb.help) { $('help-panel').classList.add('hidden'); helpOpened = null; }
+      } else {
+        $('help-panel').classList.remove('hidden'); renderHelp();
+        helpOpened = { by: 'key', key: kb.help };
+      }
+      return;
+    }
+    if (e.code === kb.interact) { doInteract('key'); return; }
     if (e.code === 'Digit1' || e.code === 'Digit2' || e.code === 'Digit3' || e.code === 'Digit4' ||
         e.code === 'Digit5' || e.code === 'Digit6' || e.code === 'Digit7') {
       selSlot = +e.code.slice(-1) - 1; updateHUD();
@@ -240,18 +315,34 @@ function bindInput() {
     if (e.code === 'Digit9') { selSlot = 8; updateHUD(); }
     if (e.code === 'Digit0') { selSlot = 9; updateHUD(); }
     if (e.code === 'KeyF') { eatSelected(); }
-    if (e.code === 'Escape') { closePanels(); }
   });
-  document.addEventListener('keyup', (e) => { keys[e.code] = false; });
+  document.addEventListener('keyup', (e) => {
+    keys[e.code] = false;
+    if (e.code === S.keybinds.forward) { doubleTapSprint = false; forwardHeld = false; }
+  });
   document.addEventListener('mousemove', (e) => {
     if (!locked) return;
     P.yaw -= e.movementX * 0.0024;
     P.pitch = Math.max(-1.2, Math.min(0.9, P.pitch - e.movementY * 0.0024));
   });
-  $('game-canvas').addEventListener('click', () => {
-    if (document.querySelector('.inv-panel:not(.hidden), .shop-panel:not(.hidden)')) return;
-    if (!locked) $('game-canvas').requestPointerLock();
-    else onPrimaryAction();
+  // No context menu in-game: right-click is Interact, not a browser menu.
+  $('game-canvas').addEventListener('contextmenu', (e) => e.preventDefault());
+  $('game-canvas').addEventListener('mousedown', (e) => {
+    // A mouse menu open means the cursor is out and look is stopped —
+    // canvas clicks must not re-lock or act until the menu closes.
+    if (!$('inv-panel').classList.contains('hidden') || !$('shop-panel').classList.contains('hidden') ||
+        !$('pause-menu').classList.contains('hidden')) return;
+    if (!locked) {
+      try { $('game-canvas').requestPointerLock(); } catch { /* ignore */ }
+      return;
+    }
+    if (e.button === 0) {
+      if (buildMode) { placeGhostPiece(); return; }
+      onPrimaryAction();
+    } else if (e.button === 2) {
+      if (buildMode) { setBuildMode(false); return; }
+      doInteract('mouse');
+    }
   });
   document.addEventListener('pointerlockchange', () => {
     locked = document.pointerLockElement === $('game-canvas');
@@ -262,14 +353,74 @@ function bindInput() {
     updateHUD();
   }, { passive: true });
   $('chat-input').addEventListener('keydown', (e) => { e.stopPropagation(); });
+  // Mouse-menu close buttons: hide the panel and re-capture pointer
+  // lock from the click gesture, so play resumes immediately.
+  document.addEventListener('click', (e) => {
+    const closer = e.target.closest('.panel-close');
+    if (!closer) return;
+    const panel = closer.closest('.shop-panel, .inv-panel');
+    if (panel) panel.classList.add('hidden');
+    requestGameLock();
+  });
+  $('btn-pause').onclick = () => openPause();
+  $('pause-resume').onclick = () => closePause();
+  $('pause-lobby').onclick = () => backToLobby();
+  $('pause-keepinv').onchange = (e) => savePauseSettings();
+  $('pause-friendly').onchange = (e) => savePauseSettings();
+}
+function requestGameLock() {
+  if (!started || $('game-screen').classList.contains('hidden')) return;
+  try {
+    const lk = $('game-canvas').requestPointerLock();
+    if (lk && lk.catch) lk.catch(() => {});
+  } catch { /* click-to-lock fallback */ }
 }
 
 function renderHelp() {
   $('help-panel').innerHTML = `<h3>How to play</h3>
-  <p><b>WASD</b> move · <b>Mouse</b> look · <b>Space</b> jump · <b>E</b> interact · <b>Click</b> chop / mine / place<br>
+  <p><b>WASD</b> move · <b>Double-tap W</b> sprint (hold W) · <b>Mouse</b> look · <b>Space</b> jump<br>
+  <b>Right-click</b> (or <b>E</b>) interact · <b>Left-click</b> chop / mine / place<br>
   <b>1–7</b> hotbar · <b>8, 9, 0</b> permanent slots (car key, house key) · <b>Scroll</b> switch slot<br>
-  <b>I</b> backpack · <b>B</b> build mode · <b>Q</b> quick craft · <b>T</b> chat · <b>F</b> eat selected food · <b>H</b> this help</p>
+  <b>I</b> backpack · <b>B</b> build mode · <b>Q</b> quick craft · <b>C</b> or <b>T</b> chat · <b>F</b> eat selected food · <b>Esc</b> menu · <b>H</b> this help</p>
   <p>Start: chop trees with your wooden axe. Use the gold bench near spawn to craft walls, tools and machines. Place a vehicle machine, craft a car, and your car key appears in a permanent slot. Watch hunger — eat apples to stay full and regen health.</p>`;
+}
+
+// ---------- Pause menu ----------
+function openPause() {
+  if (!started || chatOpen) return;
+  pauseOpen = true;
+  $('pause-world-name').textContent = W ? ('World: ' + W.name) : '';
+  $('pause-keepinv').checked = !!(W && W.keepInv);
+  $('pause-friendly').checked = W ? W.friendly !== false : true;
+  $('pause-menu').classList.remove('hidden');
+  document.exitPointerLock?.();
+}
+function closePause() {
+  pauseOpen = false;
+  $('pause-menu').classList.add('hidden');
+  requestGameLock();
+}
+function savePauseSettings() {
+  if (!W) return;
+  W.keepInv = $('pause-keepinv').checked;
+  W.friendly = $('pause-friendly').checked;
+  // Persist to the lobby's saved world/server entry for this world.
+  const worlds = load('somewhere_worlds', []);
+  const w = worlds.find((x) => x.id === W.id);
+  if (w) { w.keepInv = W.keepInv; w.friendly = W.friendly; save('somewhere_worlds', worlds); return; }
+  const servers = load('somewhere_servers', []);
+  const s = servers.find((x) => x.id === W.id);
+  if (s) { s.keepInv = W.keepInv; s.friendly = W.friendly; save('somewhere_servers', servers); }
+}
+function backToLobby() {
+  pauseOpen = false;
+  $('pause-menu').classList.add('hidden');
+  if (RAF) { cancelAnimationFrame(RAF); RAF = null; }
+  started = false;
+  saveGame();
+  $('game-screen').classList.add('hidden');
+  if (S.showLobby) S.showLobby();
+  else $('lobby-screen').classList.remove('hidden');
 }
 
 // ---------- Loop ----------
@@ -316,19 +467,25 @@ function updateDayNight() {
   // Hunger drain + regen
   P.hunger = Math.max(0, P.hunger - 0.05 * (1 / 60) * 60 * 0.016); // ~1 per 20s, frame-rate independent-ish
 }
-function groundY(x, z) {
+function groundY(x, z, yHint) {
   const h = heightAt(x, z, W.seed);
-  // Inside a cave footprint, the floor is the cave's flat floor — not the
-  // hillside — so walking into a cave actually works instead of climbing
-  // through the roof.
+  // Cave floors: the terrain is NOT carved, so a cave chamber sits
+  // inside the hillside. The chamber floor must only apply when the
+  // caller is actually below the hillside surface (walking inside) —
+  // otherwise a player walking on TOP of the mound would snap down
+  // through the roof into the chamber (the phase-through bug). Callers
+  // at ground level (drops, placement) pass no hint and get the old
+  // floor behavior; the player/car pass their current height.
   if (world && world.caves) {
     for (const c of world.caves) {
       const dx = x - c.x, dz = z - c.z;
       const lx = dx * Math.cos(c.facing) - dz * Math.sin(c.facing);
       const lz = dx * Math.sin(c.facing) + dz * Math.cos(c.facing);
-      // Tilted floor plane: rises toward the back of the cave with the
-      // hillside (see buildCave), so walking in stays on the floor.
-      if (Math.abs(lx) < 1.85 && lz > -2.8 && lz < 2.9) return Math.max(c.floorY - lz * (c.slope || 0), -0.35);
+      if (Math.abs(lx) < 1.85 && lz > -2.8 && lz < 2.9) {
+        if (yHint === undefined || yHint < h - 1.2) {
+          return Math.max(c.floorY - lz * (c.slope || 0), -0.35);
+        }
+      }
     }
   }
   return Math.max(h, -0.35); // wade in shallows; deep water just floors out in v1
@@ -337,7 +494,8 @@ function groundY(x, z) {
 // ---------- Player ----------
 function updatePlayer(dt) {
   const kb = S.keybinds;
-  const speed = (keys['ShiftLeft'] || keys['ShiftRight']) ? 9 : 6;
+  // Sprint: Shift, or a double-tap of forward held down (see bindInput).
+  const speed = (keys['ShiftLeft'] || keys['ShiftRight'] || (doubleTapSprint && keys[kb.forward])) ? 9 : 6;
   let fx = 0, fz = 0;
   if (keys[kb.forward]) fz -= 1;
   if (keys[kb.back]) fz += 1;
@@ -351,13 +509,14 @@ function updatePlayer(dt) {
     mx = (fz * sin + fx * cos) / len * speed;
     mz = (fz * cos - fx * sin) / len * speed;
   }
-  const inWater = heightAt(P.pos.x, P.pos.z, W.seed) < 0;
-  const spd = inWater ? 0.55 : 1;
-  P.pos.x += mx * spd * dt;
-  P.pos.z += mz * spd * dt;
+  // Water does NOT slow walking anymore (swimming/drowning stay v2).
+  P.pos.x += mx * dt;
+  P.pos.z += mz * dt;
   collideWorld();
-  // Vertical
-  const g = groundY(P.pos.x, P.pos.z);
+  // Vertical — grounded on the heightmap every frame, with the player's
+  // own height as the cave hint, so no spot (slopes, cliffs, cave
+  // mounds) lets the player fall or clip through the ground.
+  const g = groundY(P.pos.x, P.pos.z, P.pos.y);
   if (!P.onGround) {
     P.vel.y -= 22 * dt;
     P.pos.y += P.vel.y * dt;
@@ -592,13 +751,27 @@ function buildViewmodel() {
   headBox(hoe, 0.04, 0.10, 0.04, 0, 0.225, 0.035, 0.5, 0, 0); // neck
   headBox(hoe, 0.22, 0.10, 0.022, 0, 0.25, 0.095, 0.5, 0, 0); // blade
   viewmodels.hoe = hoe;
+  // Ground stone: a ROCK, not a pickaxe — a craggy gray dodecahedron
+  // like the rocks on the ground, so the held fallback never reads as
+  // a stone pickaxe.
+  const rock = mk(0.44, -0.42, -1.05, 0.15, 0.25, -0.20);
+  const rockMesh = new THREE.Mesh(new THREE.DodecahedronGeometry(0.16),
+    new THREE.MeshStandardMaterial({ color: 0x6e7073, roughness: 1 }));
+  rockMesh.scale.y = 0.78;
+  rock.add(rockMesh);
+  viewmodels.rock = rock;
   for (const g of Object.values(viewmodels)) g.traverse((m) => { if (m.isMesh) m.castShadow = false; });
   // Back-compat: old code references `viewmodel` for driving visibility
   viewmodel = { set visible(v) { for (const g of Object.values(viewmodels)) g.visible = v && g.userData.active; }, get visible() { return false; } };
 }
+function triggerSwing() {
+  swingStart = performance.now();
+}
 function updateViewmodel() {
   const sel = selectedItem();
-  const tool = sel && ITEMS[sel.id]?.tool;
+  // The ground stone's viewmodel is the rock, not the axe — its tool
+  // type is 'axe' (it chops), but what you hold must look like a rock.
+  const tool = sel ? (sel.id === 'ground_stone' ? 'rock' : ITEMS[sel.id]?.tool) : null;
   const show = !driving && !buildMode && !!tool && viewmodels[tool];
   // Head color matches the inventory identity: wooden axe = red head
   // like its axe icon, stone tools = gray steel, wooden pickaxe = brown.
@@ -606,9 +779,23 @@ function updateViewmodel() {
   if (sel && viewmodels[tool] && viewmodels[tool].userData.headMat) {
     viewmodels[tool].userData.headMat.color.set(HEAD_COLORS[sel.id] ?? 0xb8bcc2);
   }
+  // Item-use animation: a swing is a visible raise-and-strike over
+  // ~0.35s, applied to whichever tool is held. Without this the tool
+  // just sat static while chopping/mining.
+  const swingP = swingStart ? Math.min(1, (performance.now() - swingStart) / swingDur) : 1;
+  const swingCurve = swingP < 1 ? Math.sin(swingP * Math.PI) : 0;
   for (const [k, g] of Object.entries(viewmodels)) {
     g.userData.active = (k === tool);
     g.visible = !!show && k === tool;
+    if (g.visible) {
+      // Base pose is set at build time (mk rotation); the swing adds a
+      // downward chop rotation and a small dip, then settles back.
+      const base = g.userData.baseRot || (g.userData.baseRot = g.rotation.clone());
+      const basePos = g.userData.basePos || (g.userData.basePos = g.position.clone());
+      g.rotation.x = base.x - swingCurve * 0.85;
+      g.rotation.z = base.z + swingCurve * 0.15;
+      g.position.y = basePos.y - swingCurve * 0.07;
+    }
   }
 }
 
@@ -648,103 +835,161 @@ function findTarget() {
   return best;
 }
 function targetLabel(t) {
+  // Unmistakable affordance: the verb AND the button, per target.
+  // LEFT = attack/chop/mine, RIGHT = interact — never just "click".
   switch (t.kind) {
-    case 'tree': return 'Tree — click to chop';
-    case 'rock': return t.ref.iron ? 'Iron ore — needs pickaxe' : 'Stone — needs pickaxe';
-    case 'groundstone': return 'Stone — click to pick up';
-    case 'chest': return 'Loot chest — E to open';
-    case 'goldbench': return 'Gold bench — E to craft (unbreakable)';
-    case 'shop': return 'Shop — E to buy & sell';
-    case 'carshop': return 'Car shop — E to repair or trade in';
-    case 'landoffice': return P.landOwned ? 'Your land office' : 'Land office — E to buy land (100 coins)';
+    case 'tree': return 'Tree — Left click to chop';
+    case 'rock': return t.ref.iron ? 'Iron ore — Left click to mine (needs pickaxe)' : 'Stone — Left click to mine (needs pickaxe)';
+    case 'groundstone': return 'Stone — Right click to pick up';
+    case 'chest': return 'Loot chest — Right click to open';
+    case 'goldbench': return 'Gold bench — Right click to craft (unbreakable)';
+    case 'shop': return 'Shop — Right click to buy & sell';
+    case 'carshop': return 'Car shop — Right click to repair or trade in';
+    case 'landoffice': return P.landOwned ? 'Your land office' : 'Land office — Right click to buy land (100 coins)';
     case 'placed': {
-      const use = { vehicle_machine: 'Vehicle machine — E to build a car', gas_pump: 'Gas pump — E to refuel', chest: 'Storage chest — E to open', workbench: 'Workbench — E to craft' };
-      return use[t.ref.itemId] || `${ITEMS[t.ref.itemId]?.name || 'Structure'} — click to smash`;
+      const use = { vehicle_machine: 'Vehicle machine — Right click to build a car', gas_pump: 'Gas pump — Right click to refuel', chest: 'Storage chest — Right click to open', workbench: 'Workbench — Right click to craft' };
+      return use[t.ref.itemId] || `${ITEMS[t.ref.itemId]?.name || 'Structure'} — Left click to smash`;
     }
-    case 'car': return t.ref.locked ? 'Locked car' : 'Car — E to drive';
-    case 'crop': return t.ref.stage >= 3 ? `${t.ref.seed === 'seed_wheat' ? 'Wheat' : 'Carrot'} ready — click to harvest` : 'Growing crop';
+    case 'car': return t.ref.locked ? 'Locked car' : 'Car — Right click to drive';
+    case 'crop': return t.ref.stage >= 3 ? `${t.ref.seed === 'seed_wheat' ? 'Wheat' : 'Carrot'} ready — Left click to harvest` : 'Growing crop';
     default: return '';
   }
 }
+function targetBasePos(t) {
+  // Ground position + radius for the highlight ring.
+  switch (t.kind) {
+    case 'tree': return { x: t.ref.x, z: t.ref.z, r: Math.max(0.9, (t.ref.radius || 0.6) + 0.5) };
+    case 'rock': return { x: t.ref.x, z: t.ref.z, r: (t.ref.radius || 0.7) + 0.5 };
+    case 'groundstone': return { x: t.ref.x, z: t.ref.z, r: 0.55 };
+    case 'chest': return { x: t.ref.x, z: t.ref.z, r: 1.1 };
+    case 'car': return { x: t.ref.group.position.x, z: t.ref.group.position.z, r: 2.4 };
+    case 'placed': return { x: t.ref.x, z: t.ref.z, r: 1.8 };
+    case 'crop': return { x: t.ref.x, z: t.ref.z, r: 0.7 };
+    default: return { x: t.ref.x, z: t.ref.z, r: 1.8 };
+  }
+}
 function updateTargetPrompt() {
-  if (buildMode || driving) { $('interact-prompt').classList.add('hidden'); $('crosshair').classList.remove('target'); target = null; return; }
+  if (buildMode || driving) {
+    $('interact-prompt').classList.add('hidden');
+    $('crosshair').classList.remove('target');
+    if (targetRing) targetRing.visible = false;
+    target = null; return;
+  }
   target = findTarget();
   const el = $('interact-prompt');
   if (target) {
-    el.textContent = targetLabel(target) + '  ·  E';
+    el.textContent = targetLabel(target);
     el.classList.remove('hidden');
     $('crosshair').classList.add('target'); // crosshair glows only on a valid target
+    // Highlight ring on the ground around the target, so it is
+    // unmistakable what you are aiming at.
+    if (!targetRing) {
+      targetRing = new THREE.Mesh(
+        new THREE.RingGeometry(0.85, 1, 40),
+        new THREE.MeshBasicMaterial({ color: 0x57e32e, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }));
+      targetRing.rotation.x = -Math.PI / 2;
+      scene.add(targetRing);
+    }
+    const bp = targetBasePos(target);
+    targetRing.position.set(bp.x, groundY(bp.x, bp.z) + 0.08, bp.z);
+    targetRing.scale.setScalar(bp.r);
+    targetRing.visible = true;
   } else {
     el.classList.add('hidden');
     $('crosshair').classList.remove('target');
+    if (targetRing) targetRing.visible = false;
   }
 }
 
-// ---------- Primary action (click) ----------
+// ---------- Primary action (LEFT click: attack / chop / mine) ----------
 function onPrimaryAction() {
   if (buildMode) { placeGhostPiece(); return; }
   if (!target) return;
   const sel = selectedItem();
+  // Left click never interacts (no chests, benches, shops, cars) and
+  // never triggers car-key/jerrycan use — that is all right-click.
   if (target.kind === 'tree') {
     if (!sel || ITEMS[sel.id]?.tool !== 'axe') { toast('You need an axe selected to chop. (Your wooden axe is in your hotbar.)'); return; }
+    triggerSwing();
     chopTree(target.ref, sel);
   } else if (target.kind === 'rock') {
     if (!sel || ITEMS[sel.id]?.tool !== 'pickaxe') { toast('You need a pickaxe to mine. Quick-craft a wooden pickaxe (Q) — it only costs wood.'); return; }
+    triggerSwing();
     mineRock(target.ref, sel);
-  } else if (target.kind === 'groundstone') {
-    scene.remove(target.ref.mesh);
-    world.groundStones = world.groundStones.filter((s) => s !== target.ref);
-    addItem('ground_stone');
-    chatMsg('System', 'Picked up a stone. It can chop a tree in a pinch — slower, and it breaks after one tree.', true);
   } else if (target.kind === 'placed') {
+    triggerSwing();
     smashPlaced(target.ref);
   } else if (target.kind === 'crop') {
     harvestCrop(target.ref);
-  } else {
-    doInteract();
   }
 }
-function doInteract() {
+// ---------- Interact (RIGHT click, or E) ----------
+function doInteract(source) {
   if (driving) { exitCar(); return; }
+  // A shop-type panel already open: E toggles it shut ONLY if the
+  // keyboard opened it; a mouse-opened panel ignores the key.
+  if (!$('shop-panel').classList.contains('hidden')) {
+    if (source === 'key' && shopOpened && shopOpened.by === 'key') {
+      $('shop-panel').classList.add('hidden');
+      shopOpened = null;
+      requestGameLock();
+    }
+    return;
+  }
   if (!target) return;
   if (target.kind === 'chest') {
     const c = target.ref;
     c.opened = true;
     c.group.children[1].position.y = 1.1; c.group.children[1].rotation.z = -0.7;
     for (const l of c.loot) addItem(l.id, l.n);
-    chatMsg('System', 'Chest opened!', true);
   } else if (target.kind === 'goldbench' || (target.kind === 'placed' && target.ref.itemId === 'workbench')) {
-    openCraft(false);
+    openCraft(false, source === 'mouse' ? { by: 'mouse', key: null } : { by: 'key', key: S.keybinds.interact });
   } else if (target.kind === 'shop') {
-    openShop();
+    openShop(source);
   } else if (target.kind === 'carshop') {
-    openCarShop();
+    openCarShop(source);
   } else if (target.kind === 'landoffice') {
     buyLand();
   } else if (target.kind === 'car') {
     enterCar(target.ref);
+  } else if (target.kind === 'groundstone') {
+    scene.remove(target.ref.mesh);
+    world.groundStones = world.groundStones.filter((s) => s !== target.ref);
+    addItem('ground_stone');
+    toast('Picked up a stone. It can chop a tree in a pinch — slower, and it breaks after that tree is fully chopped.');
   } else if (target.kind === 'placed') {
     const p = target.ref;
-    if (p.itemId === 'vehicle_machine') openVehiclePanel(p);
+    if (p.itemId === 'vehicle_machine') openVehiclePanel(p, source);
     else if (p.itemId === 'gas_pump') refuelNearCar(p);
-    else if (p.itemId === 'chest') openStorage(p);
-    else if (p.itemId === 'workbench') openCraft(false);
-  } else if (target.kind === 'tree' || target.kind === 'rock' || target.kind === 'groundstone' || target.kind === 'crop') {
-    onPrimaryAction();
+    else if (p.itemId === 'chest') openStorage(p, source);
+    else if (p.itemId === 'workbench') openCraft(false, source === 'mouse' ? { by: 'mouse', key: null } : { by: 'key', key: S.keybinds.interact });
   }
+  // Trees/rocks/crops on right-click do NOTHING — chopping and mining
+  // are left-click only. (The old fallthrough to onPrimaryAction here
+  // is deliberately gone.)
 }
 function chopTree(t, toolSlot) {
   t.hp -= toolSlot ? ITEMS[toolSlot.id].power : 1;
-  damageTool(toolSlot);
+  const isTempStone = toolSlot && ITEMS[toolSlot.id].temp;
+  if (!isTempStone) damageTool(toolSlot);
   if (t.hp <= 0) {
     scene.remove(t.group);
     world.trees = world.trees.filter((x) => x !== t);
     const wood = 2 + Math.floor(Math.random() * 3);
     addItem('wood', wood);
-    let msg = `+${wood} Wood`;
-    if (Math.random() < 0.3) { addItem('apple', 1); msg += ' · Apple!'; }
-    chatMsg('System', msg, true);
-    toast(msg);
+    if (Math.random() < 0.3) { addItem('apple', 1); }
+    // The ground stone survives the whole tree (multiple hits) and
+    // breaks ONLY now, when the tree is fully chopped — never after a
+    // single swing.
+    if (isTempStone) {
+      const arr = selSlot < 7 ? P.hotbar : P.perm;
+      const idx = selSlot < 7 ? selSlot : selSlot - 7;
+      if (arr[idx] && arr[idx].id === 'ground_stone') {
+        arr[idx] = null;
+        if (selSlot < 7) P.hotbar = P.hotbar.filter(Boolean);
+      }
+      toast('Your stone broke apart.');
+    }
   } else {
     t.group.scale.setScalar((t.scale || 1) * (1 - (3 - t.hp) * 0.06));
     t.group.rotation.z = (3 - t.hp) * 0.03;
@@ -757,8 +1002,8 @@ function mineRock(r, toolSlot) {
   if (r.hp <= 0) {
     scene.remove(r.mesh);
     world.rocks = world.rocks.filter((x) => x !== r);
-    if (r.iron) { addItem('iron', 2); chatMsg('System', '+2 Iron ore', true); }
-    else { addItem('stone', 3); chatMsg('System', '+3 Stone', true); }
+    if (r.iron) { addItem('iron', 2); }
+    else { addItem('stone', 3); }
   }
   updateHUD();
 }
@@ -1137,17 +1382,19 @@ function buildPieceMesh(itemId, colorOverride) {
   }
   return g;
 }
-function setBuildMode(on) {
+function setBuildMode(on, opened) {
   buildMode = on;
   $('build-bar').classList.toggle('hidden', !on);
   if (on) {
+    buildOpened = opened || { by: 'key', key: null };
     renderBuildBar();
     if (!buildSel) {
       const first = [...P.hotbar, ...P.inv].find((s) => s && ITEMS[s.id]?.placeable);
       if (first) buildSel = first.id;
     }
-    toast('Build mode — click to place, right-click / B to exit. Pieces need ground beneath them.');
+    toast('Build mode — left-click to place, right-click / B to exit. Pieces need ground beneath them.');
   } else {
+    buildOpened = null;
     if (ghost) { scene.remove(ghost); ghost = null; }
   }
 }
@@ -1284,12 +1531,20 @@ function updateCrops() {
 }
 
 // ---------- Vehicles ----------
-function openVehiclePanel(machine) {
+// Mouse menus: opening one exits pointer lock (cursor appears, look
+// stops); closing one re-captures it via the delegated .panel-close
+// handler in bindInput.
+function openMousePanel(source) {
+  shopOpened = source === 'mouse' ? { by: 'mouse', key: null } : { by: 'key', key: S.keybinds.interact };
+  document.exitPointerLock?.();
+}
+function openVehiclePanel(machine, source) {
+  openMousePanel(source);
   const panel = $('shop-panel');
   panel.classList.remove('hidden');
   panel.innerHTML = `<h3>Vehicle machine</h3><p class="fine">Machines adapt anywhere — even on water for water vehicles (coming soon).</p>
     <div class="craft-row"><span>Car</span><span class="cost">6 iron · 4 wood</span><button id="mk-car" class="btn small" ${countOf('iron') >= 6 && countOf('wood') >= 4 ? '' : 'disabled'}>Build car</button></div>
-    <button class="btn small ghost" onclick="document.getElementById('shop-panel').classList.add('hidden')">Close</button>`;
+    <button class="btn small ghost panel-close">Close</button>`;
   $('mk-car').onclick = () => {
     removeCount('iron', 6); removeCount('wood', 4);
     spawnCar(machine.x + 3, machine.z);
@@ -1319,7 +1574,7 @@ function spawnCar(x, z) {
   const car = { group: g, wheels, winMat, yaw: 0, speed: 0, fuel: 100, hp: 100, locked: false, owned: true, broken: false, breakTimer: 0 };
   cars.push(car);
   if (!P.perm[0]) { P.perm[0] = { id: 'car_key', n: 1 }; P.carKey = true; }
-  chatMsg('System', 'Car built! Your Car Key appeared in a permanent slot (press 8, then look at the car and press E to lock/unlock).', true);
+  toast('Car built! Your Car Key is in a permanent slot (press 8, look at the car, right-click to lock/unlock).');
   updateHUD();
 }
 function enterCar(car) {
@@ -1360,7 +1615,7 @@ function updateDriving(dt) {
   } else {
     car.group.position.x = nx; car.group.position.z = nz;
   }
-  car.group.position.y = groundY(car.group.position.x, car.group.position.z);
+  car.group.position.y = groundY(car.group.position.x, car.group.position.z, car.group.position.y);
   car.group.rotation.y = car.yaw;
   for (const w of car.wheels) w.rotation.x += car.speed * dt * 2;
   // Driver's view — first person even while driving
@@ -1401,7 +1656,8 @@ function refuelNearCar() {
 }
 
 // ---------- Shops, land, storage ----------
-function openShop() {
+function openShop(source) {
+  openMousePanel(source);
   const panel = $('shop-panel');
   panel.classList.remove('hidden');
   panel.innerHTML = `<h3>Shop</h3><p class="fine">The shopkeeper runs this shop. You set nothing here — prices are fixed for now.</p>
@@ -1409,16 +1665,17 @@ function openShop() {
     <div class="craft-row"><span>${itemIcon('seed_carrot')} Carrot seeds</span><span class="cost">5 coins</span><button class="btn small" ${P.money >= 5 ? '' : 'disabled'} data-buy="seed_carrot">Buy</button></div>
     <div class="craft-row"><span>${itemIcon('wood')} Sell 5 wood</span><span class="cost">+10 coins</span><button class="btn small" ${countOf('wood') >= 5 ? '' : 'disabled'} data-sell="wood">Sell</button></div>
     <div class="craft-row"><span>${itemIcon('stone')} Sell 5 stone</span><span class="cost">+5 coins</span><button class="btn small" ${countOf('stone') >= 5 ? '' : 'disabled'} data-sell="stone">Sell</button></div>
-    <button class="btn small ghost" onclick="document.getElementById('shop-panel').classList.add('hidden')">Close</button>`;
+    <button class="btn small ghost panel-close">Close</button>`;
   panel.querySelectorAll('[data-buy]').forEach((b) => b.onclick = () => {
-    P.money -= 5; addItem(b.dataset.buy, 2); openShop(); updateHUD();
+    P.money -= 5; addItem(b.dataset.buy, 2); openShop(source); updateHUD();
   });
   panel.querySelectorAll('[data-sell]').forEach((b) => b.onclick = () => {
     if (removeCount(b.dataset.sell, 5)) { P.money += b.dataset.sell === 'wood' ? 10 : 5; }
-    openShop(); updateHUD();
+    openShop(source); updateHUD();
   });
 }
-function openCarShop() {
+function openCarShop(source) {
+  openMousePanel(source);
   const car = cars.find((c) => Math.hypot(c.group.position.x - P.pos.x, c.group.position.z - P.pos.z) < 10 && !c.broken);
   const panel = $('shop-panel');
   panel.classList.remove('hidden');
@@ -1428,9 +1685,9 @@ function openCarShop() {
       <div class="craft-row"><span>Repair car</span><span class="cost">20 coins</span><button class="btn small" ${P.money >= 20 ? '' : 'disabled'} id="repair">Repair</button></div>
       <div class="craft-row"><span>Trade in for parts</span><span class="cost">Never enough for a whole new car</span><button class="btn small" id="trade">Trade in</button></div>`
       : `<p class="fine">Drive a damaged car here to repair it or trade it in for parts.</p>`) +
-    `<button class="btn small ghost" onclick="document.getElementById('shop-panel').classList.add('hidden')">Close</button>`;
+    `<button class="btn small ghost panel-close">Close</button>`;
   const rep = $('repair');
-  if (rep) rep.onclick = () => { P.money -= 20; car.hp = 100; toast('Car repaired!'); openCarShop(); updateHUD(); };
+  if (rep) rep.onclick = () => { P.money -= 20; car.hp = 100; toast('Car repaired!'); openCarShop(source); updateHUD(); };
   const tr = $('trade');
   if (tr) tr.onclick = () => {
     scene.remove(car.group); cars.splice(cars.indexOf(car), 1);
@@ -1441,7 +1698,7 @@ function openCarShop() {
 }
 function buyLand() {
   if (P.landOwned) { toast('You already own land here.'); return; }
-  if (P.money < 100) { toast('Land costs 100 coins. Sell wood and stone at the shop.'); return; }
+  if (P.money < 100) { toast('Land costs 100 coins.'); return; }
   P.money -= 100; P.landOwned = true;
   if (!P.perm[1]) P.perm[1] = { id: 'house_key', n: 1 };
   // Red-line plot near spawn
@@ -1454,13 +1711,14 @@ function buyLand() {
   chatMsg('System', 'Land bought! Your House Key is in a permanent slot (press 9). Place a House Kit inside the red line.', true);
   updateHUD(); saveGame();
 }
-function openStorage(piece) {
+function openStorage(piece, source) {
+  openMousePanel(source);
   const panel = $('shop-panel');
   panel.classList.remove('hidden');
   const render = () => {
     panel.innerHTML = `<h3>Storage chest (40 slots)</h3>
       <div>${piece.contents.length ? piece.contents.map((s, i) => `<div class="craft-row"><span><span class="ic sm">${itemIcon(s.id)}</span> ${ITEMS[s.id].name} ×${s.n}</span><button class="btn small" data-take="${i}">Take</button></div>`).join('') : '<p class="fine">Empty. Deposit your selected hotbar item.</p>'}</div>
-      <div style="margin-top:10px"><button class="btn small" id="deposit">Deposit selected item</button> <button class="btn small ghost" onclick="document.getElementById('shop-panel').classList.add('hidden')">Close</button></div>`;
+      <div style="margin-top:10px"><button class="btn small" id="deposit">Deposit selected item</button> <button class="btn small ghost panel-close">Close</button></div>`;
     panel.querySelectorAll('[data-take]').forEach((b) => b.onclick = () => {
       const s = piece.contents[+b.dataset.take];
       if (addItem(s.id, s.n)) { piece.contents.splice(+b.dataset.take, 1); render(); updateHUD(); }
@@ -1478,12 +1736,20 @@ function openStorage(piece) {
 }
 
 // ---------- Crafting / inventory UI ----------
-function toggleInventory(force) {
+function toggleInventory(force, opened) {
   const panel = $('inv-panel');
   const show = force !== undefined ? force : panel.classList.contains('hidden');
   panel.classList.toggle('hidden', !show);
   $('craft-list').innerHTML = '';
-  if (show) { document.exitPointerLock?.(); renderInvGrid(); }
+  if (show) {
+    // A mouse menu: cursor out, look-around stopped.
+    invOpened = opened || { by: 'mouse', key: null };
+    document.exitPointerLock?.();
+    renderInvGrid();
+  } else {
+    invOpened = null;
+    craftOpened = null;
+  }
 }
 function renderInvGrid() {
   const grid = $('inv-grid');
@@ -1526,11 +1792,14 @@ function renderInvGrid() {
     : `10 normal slots — craft a Backpack (4 leather) to expand to 40. Permanent slots (car key, house key) live in the top bar — press 8, 9, 0 to select them.`;
   grid.appendChild(note);
 }
-$('inv-close').onclick = () => toggleInventory(false);
-$('btn-quickcraft').onclick = () => openCraft(true);
-$('btn-craft').onclick = () => openCraft(false);
-function openCraft(quick) {
-  toggleInventory(true);
+$('inv-close').onclick = () => { toggleInventory(false); requestGameLock(); };
+$('btn-quickcraft').onclick = () => openCraft(true, { by: 'mouse', key: null });
+$('btn-craft').onclick = () => openCraft(false, { by: 'mouse', key: null });
+function openCraft(quick, opened) {
+  // Mouse-opened craft ignores the Q key; keyboard-opened craft
+  // toggles shut on Q. A button click is a mouse open.
+  toggleInventory(true, opened || invOpened || { by: 'mouse', key: null });
+  craftOpened = { ...(opened || invOpened || { by: 'mouse', key: null }), quick: !!quick };
   const list = $('craft-list');
   const recipes = quick ? QUICK_RECIPES : RECIPES;
   list.innerHTML = `<h4>${quick ? 'Quick craft (anywhere)' : 'Workbench — same stuff at every workbench'}</h4>`;
@@ -1543,9 +1812,9 @@ function openCraft(quick) {
       for (const [c, n] of Object.entries(cost)) removeCount(c, n);
       if (id === 'backpack') {
         P.hasBackpack = true;
-        chatMsg('System', 'Backpack equipped! Normal inventory is now 40 slots.', true);
+        toast('Backpack equipped! Normal inventory is now 40 slots.');
       } else addItem(id, 1);
-      openCraft(quick); updateHUD();
+      openCraft(quick, craftOpened); updateHUD();
     };
     list.appendChild(row);
   }
@@ -1555,6 +1824,7 @@ function closePanels() {
   $('shop-panel').classList.add('hidden');
   $('help-panel').classList.add('hidden');
   $('craft-list').innerHTML = '';
+  invOpened = null; craftOpened = null; helpOpened = null; shopOpened = null;
 }
 
 // ---------- HUD ----------
@@ -1562,6 +1832,14 @@ function buildHUDStatic() {
   const bar = $('hotbar');
   bar.innerHTML = '';
   for (let i = 0; i < 10; i++) {
+    // A small dash separator between the normal hotbar slots (0–6)
+    // and the permanent slots (7–9), so the two groups read apart.
+    if (i === 7) {
+      const sep = document.createElement('span');
+      sep.className = 'hotbar-sep';
+      sep.textContent = '-';
+      bar.appendChild(sep);
+    }
     const d = document.createElement('div');
     d.className = 'slot' + (i >= 7 ? ' perm' : '');
     d.dataset.slot = i;
@@ -1580,8 +1858,10 @@ function updateHUD() {
       d.innerHTML = `<span class="key">${keyLabel}</span><span class="ic">${slot ? itemIcon(slot.id) : ''}</span><span class="lbl">${def.name}</span>${slot.n > 1 ? `<span class="cnt">${slot.n}</span>` : ''}` +
         (slot.dur && def.maxDur ? `<span class="dur"><i style="width:${slot.dur / def.maxDur * 100}%"></i></span>` : '');
     } else {
+      // Empty permanent slots show NOTHING but their key — no 'perm'
+      // word, no label at all.
       d.title = '';
-      d.innerHTML = `<span class="key">${keyLabel}</span><span class="lbl">${i >= 7 ? 'Perm' : ''}</span>`;
+      d.innerHTML = `<span class="key">${keyLabel}</span><span class="lbl"></span>`;
     }
   });
   updateHUDDynamic();
@@ -1608,6 +1888,7 @@ function closeChat() {
   chatOpen = false;
   $('chat-input').classList.add('hidden');
   $('chat-input').value = '';
+  requestGameLock();
 }
 function sendChat() {
   const v = $('chat-input').value.trim();
@@ -1665,9 +1946,10 @@ function loadSave() {
   }
 }
 
-// Car key / jerrycan also work via the E interact key, not just clicking
+// Car key / jerrycan work via the INTERACT path only (right-click / E) —
+// never via left-click attack.
 const _origInteract = doInteract;
-doInteract = function () {
+doInteract = function (source) {
   const sel = selectedItem();
   if (target && target.kind === 'car' && sel && sel.id === 'car_key') {
     const car = target.ref;
@@ -1684,31 +1966,16 @@ doInteract = function () {
     updateHUD();
     return;
   }
-  _origInteract();
+  _origInteract(source);
 };
 
-// Patch primary actions that depend on selection: hoe tilling + car key + jerrycan
+// Left-click with no target and a hoe selected tills soil (with a swing).
 const _origPrimary = onPrimaryAction;
 onPrimaryAction = function () {
   if (buildMode) { placeGhostPiece(); return; }
   const sel = selectedItem();
   if (!target) {
-    if (sel && ITEMS[sel.id]?.tool === 'hoe') { tillSoil(); return; }
-    return;
-  }
-  if (target.kind === 'car' && sel && sel.id === 'car_key') {
-    const car = target.ref;
-    car.locked = !car.locked;
-    car.winMat.color.set(car.locked ? 0xff5a5a : 0x5ed07a);
-    car.winMat.emissive.set(car.locked ? 0x4a1010 : 0x1a4a1a);
-    toast(car.locked ? 'Car locked — nobody gets in.' : 'Car unlocked — green window icon.');
-    return;
-  }
-  if (target.kind === 'car' && sel && sel.id === 'jerrycan') {
-    removeCount('jerrycan', 1);
-    target.ref.fuel = 100;
-    toast('Jerrycan used — tank max-filled.');
-    updateHUD();
+    if (sel && ITEMS[sel.id]?.tool === 'hoe') { triggerSwing(); tillSoil(); return; }
     return;
   }
   _origPrimary();
@@ -1728,4 +1995,14 @@ window.__debug = {
   place: () => placeGhostPiece(),
   setBuild: (on) => setBuildMode(on),
   vehiclePanel: (m) => openVehiclePanel(m),
+  heightAt, biomeAt, groundY,
+  swing: () => triggerSwing(),
+  swingProgress: () => (swingStart ? Math.min(1, (performance.now() - swingStart) / swingDur) : 1),
+  setSwingDur: (v) => { swingDur = v; },
+  swingAt: (msAgo) => { swingStart = performance.now() - msAgo; },
+  closePause: () => closePause(),
+  get sprinting() { return doubleTapSprint; },
+  openPause: () => openPause(),
+  get pauseOpen() { return pauseOpen; },
+  get targetRing() { return targetRing; },
 };

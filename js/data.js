@@ -39,7 +39,9 @@ export const ITEMS = {
   pickaxe: { name: 'Stone pickaxe', tool: 'pickaxe', power: 2, maxDur: 80, chip: '#6e7278' },
   shovel: { name: 'Shovel', tool: 'shovel', power: 1, maxDur: 60, chip: '#7a5a30' },
   hoe: { name: 'Hoe', tool: 'hoe', power: 1, maxDur: 60, chip: '#5a7a3a' },
-  ground_stone: { name: 'Stone', tool: 'axe', power: 0.5, maxDur: 1, temp: true, chip: '#55575c' },
+  // Temp fallback stone: 6 hits at power 0.5 fells a 3-HP tree, and the
+  // break rule is per-tree (see chopTree) — it never dies mid-tree.
+  ground_stone: { name: 'Stone', tool: 'axe', power: 0.5, maxDur: 6, temp: true, chip: '#55575c' },
   workbench: { name: 'Workbench', placeable: 'workbench', chip: '#8a5a2b' },
   wall_wood: { name: 'Wood wall', placeable: 'wall', mat: 'wood', chip: '#6b4226' },
   wall_brick: { name: 'Brick wall', placeable: 'wall', mat: 'brick', chip: '#9a5a48' },

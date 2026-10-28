@@ -180,22 +180,44 @@ const MATS = {
 const pick = (arr, rand) => arr[Math.floor(rand() * arr.length)];
 
 function groundTexture() {
+  // Reworked ground detail: the old texture was a flat white canvas
+  // with harsh 1.6px speckle tiled 110× — up close it read as noisy
+  // plastic, and the tiling showed. The new one is multi-scale and
+  // soft: large low-contrast mottled blobs (patchy grass/dirt/sand
+  // variation), a mid layer of soft grain, and only a whisper of fine
+  // speckle — all in neutral gray so the per-vertex biome colors still
+  // drive the actual hue. Tiled 48× instead of 110× so the repeat is
+  // far less visible at walking eye level.
   const cv = document.createElement('canvas');
-  cv.width = cv.height = 256;
+  cv.width = cv.height = 512;
   const ctx = cv.getContext('2d');
-  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 9000; i++) {
-    const g = 200 + Math.floor(Math.random() * 55);
-    ctx.fillStyle = `rgba(${g},${g},${g},0.22)`;
-    ctx.fillRect(Math.random() * 256, Math.random() * 256, 1.6, 1.6);
+  ctx.fillStyle = '#cfcfcf'; ctx.fillRect(0, 0, 512, 512);
+  // Large soft mottling: overlapping radial blobs, ±10% brightness.
+  for (let i = 0; i < 260; i++) {
+    const x = Math.random() * 512, y = Math.random() * 512, r = 18 + Math.random() * 70;
+    const light = Math.random() < 0.5;
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+    grad.addColorStop(0, light ? 'rgba(255,255,255,0.10)' : 'rgba(60,60,60,0.10)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
   }
-  for (let i = 0; i < 3000; i++) { // darker speckle so the ground isn't washed out
-    ctx.fillStyle = `rgba(40,40,40,0.12)`;
-    ctx.fillRect(Math.random() * 256, Math.random() * 256, 1.6, 1.6);
+  // Mid grain: soft 2–4px dots, low alpha — texture without noise.
+  for (let i = 0; i < 5200; i++) {
+    const g = 150 + Math.floor(Math.random() * 90);
+    ctx.fillStyle = `rgba(${g},${g},${g},0.16)`;
+    ctx.beginPath(); ctx.arc(Math.random() * 512, Math.random() * 512, 1 + Math.random() * 1.6, 0, Math.PI * 2); ctx.fill();
+  }
+  // Sparse tiny pebble dots for close-up richness.
+  for (let i = 0; i < 900; i++) {
+    const g = 90 + Math.floor(Math.random() * 90);
+    ctx.fillStyle = `rgba(${g},${g},${g},0.20)`;
+    ctx.fillRect(Math.random() * 512, Math.random() * 512, 1.4, 1.4);
   }
   const tex = new THREE.CanvasTexture(cv);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(110, 110);
+  tex.repeat.set(48, 48);
+  tex.anisotropy = 4;
   return tex;
 }
 
@@ -284,13 +306,23 @@ function makeTree(form, rand, snowy) {
 }
 
 function jitteredRockGeo(s, rand) {
+  // DodecahedronGeometry is NON-indexed: the same corner appears as
+  // several separate vertices, one per face. Jittering each vertex
+  // independently used to tear faces apart, leaving cracks and holes
+  // in every rock — the "buggy rock texture". Jitter is now keyed by
+  // rounded position, so shared corners move together and faces stay
+  // sealed.
   const geo = new THREE.DodecahedronGeometry(s, 0);
   const pos = geo.attributes.position;
+  const byKey = new Map();
   for (let i = 0; i < pos.count; i++) {
-    pos.setXYZ(i,
-      pos.getX(i) * (1 + (rand() - 0.5) * 0.35),
-      pos.getY(i) * (1 + (rand() - 0.5) * 0.35),
-      pos.getZ(i) * (1 + (rand() - 0.5) * 0.35));
+    const key = pos.getX(i).toFixed(4) + ',' + pos.getY(i).toFixed(4) + ',' + pos.getZ(i).toFixed(4);
+    let j = byKey.get(key);
+    if (!j) {
+      j = [(1 + (rand() - 0.5) * 0.35), (1 + (rand() - 0.5) * 0.35), (1 + (rand() - 0.5) * 0.35)];
+      byKey.set(key, j);
+    }
+    pos.setXYZ(i, pos.getX(i) * j[0], pos.getY(i) * j[1], pos.getZ(i) * j[2]);
   }
   geo.computeVertexNormals();
   return geo;
@@ -790,43 +822,13 @@ export function buildWorld(scene, seed) {
   lantern(scene, spawn.x - 6, spawn.z + 4, seed);
   clutterAround(scene, bench.position.x, bench.position.z, seed, rand, 2);
 
-  // Shop (NPC shopkeeper + shelves) near spawn
-  const shop = new THREE.Group();
-  const hut = new THREE.Mesh(new THREE.BoxGeometry(6, 3.2, 4.5), pick(MATS.wood, rand));
-  hut.position.y = 1.6; hut.castShadow = true; shop.add(hut);
-  const roof = new THREE.Mesh(new THREE.ConeGeometry(4.6, 1.6, 4), pick(MATS.leaf, rand));
-  roof.position.y = 4.0; roof.rotation.y = Math.PI / 4; shop.add(roof);
-  const keeper = buildCharacter({ skin: '#c68850', hair: 'bun', hairColor: '#1d1a16', shirt: '#e5484d', pants: 'sweatpants', pantsColor: '#1d1a16', shoes: '#1d1a16' });
-  keeper.position.set(0, 0, 2.8); shop.add(keeper);
-  const sx = spawn.x + 7, sz = spawn.z + 8;
-  shop.position.set(sx, heightAt(sx, sz, seed), sz);
-  shop.rotation.y = Math.atan2(spawn.x - sx, spawn.z - sz); // face the spawn clearing
-  scene.add(shop);
-  interactables.push({ type: 'shop', x: sx, z: sz, radius: 4.5, mesh: shop });
-  clutterAround(scene, sx, sz, seed, rand, 5);
-  lantern(scene, sx + 3, sz - 2, seed);
-
-  // Car shop kiosk
-  const ck = new THREE.Group();
-  const booth = new THREE.Mesh(new THREE.BoxGeometry(2.5, 2.4, 2), pick(MATS.wood, rand));
-  booth.position.y = 1.2; booth.castShadow = true; ck.add(booth);
-  const sign = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.7, 0.2), MATS.gold);
-  sign.position.y = 2.8; ck.add(sign);
-  const cx = spawn.x - 9, cz = spawn.z + 6;
-  ck.position.set(cx, heightAt(cx, cz, seed), cz);
-  scene.add(ck);
-  interactables.push({ type: 'carshop', x: cx, z: cz, radius: 3.5, mesh: ck });
-  clutterAround(scene, cx, cz, seed, rand, 3);
-
-  // Land office kiosk
-  const lo = new THREE.Group();
-  const lbooth = new THREE.Mesh(new THREE.BoxGeometry(2.2, 2.2, 1.8), pick(MATS.wood, rand));
-  lbooth.position.y = 1.1; lbooth.castShadow = true; lo.add(lbooth);
-  const lx = spawn.x + 1, lz = spawn.z + 13;
-  lo.position.set(lx, heightAt(lx, lz, seed), lz);
-  scene.add(lo);
-  interactables.push({ type: 'landoffice', x: lx, z: lz, radius: 3.5, mesh: lo });
-  clutterAround(scene, lx, lz, seed, rand, 3);
+  // Fresh worlds start CLEAN: terrain, trees, rocks, loot chests, and
+  // the gold spawn bench only. No pre-stocked NPC shop, car shop, land
+  // office, or machines — those appear only when the player builds
+  // them (vehicle machines and gas pumps are workbench recipes; the
+  // shop/car-shop/land-office have no build path yet, so removing them
+  // also removes those interactions until Liam asks for one).
+  // A lantern by the gold bench stays: it marks spawn, not a shop.
 
   return { spawn, trees, rocks, groundStones, chests, interactables, caves, size: SIZE };
 }

@@ -112,45 +112,90 @@ export function buildCharacter(cfg = {}) {
   box(0.07, 0.09, 0.05, skin, 0, 1.83, 0.225, g); // nose
   box(0.12, 0.03, 0.02, mouthM, 0, 1.73, 0.215, g);
 
-  // ---- Hair (all boxy shapes) ----
+  // ---- Hair: reworked for clean silhouettes on the blocky head ----
+  // Rules every style follows: the cap hugs the head (top slab flush
+  // on the crown, side/back slabs overlapping the head faces by a
+  // visible margin, never a hairline touch), every added piece overlaps
+  // the piece below it (no floating bits, no gaps), and proportions
+  // stay close to the head instead of ballooning outward. Head top is
+  // 2.07, head faces at x ±0.22, z ±0.21.
   const hy = 2.07; // top of head
-  function topBox(h, yOff = 0) {
-    return box(0.46, h, 0.44, hairM, 0, hy + h / 2 + yOff, 0, g);
+  // Full cap: crown slab + forehead fringe + sideburn slabs + back
+  // slab, all overlapping the head and each other.
+  function cap(fringe = true) {
+    box(0.46, 0.09, 0.44, hairM, 0, hy + 0.045, 0, g); // crown, flush on top
+    if (fringe) box(0.44, 0.07, 0.05, hairM, 0, 2.03, 0.205, g); // forehead fringe
+    box(0.05, 0.16, 0.34, hairM, -0.225, 1.99, 0, g); // left side
+    box(0.05, 0.16, 0.34, hairM, 0.225, 1.99, 0, g); // right side
+    box(0.44, 0.16, 0.05, hairM, 0, 1.99, -0.205, g); // back
   }
   if (c.hair === 'short') {
-    topBox(0.10);
-    box(0.44, 0.08, 0.06, hairM, 0, 2.02, 0.20, g); // fringe
-    box(0.06, 0.14, 0.30, hairM, -0.23, 1.98, -0.02, g);
-    box(0.06, 0.14, 0.30, hairM, 0.23, 1.98, -0.02, g);
+    cap();
+    // Neat side part: a slightly raised sweep across the crown front.
+    box(0.30, 0.04, 0.30, hairM, -0.03, hy + 0.10, 0.03, g);
   } else if (c.hair === 'buzz') {
-    topBox(0.04);
+    // Close crop: a thin shell hugging the whole top of the head.
+    box(0.45, 0.035, 0.43, hairM, 0, hy + 0.018, 0, g);
+    box(0.03, 0.08, 0.32, hairM, -0.225, 2.02, 0, g);
+    box(0.03, 0.08, 0.32, hairM, 0.225, 2.02, 0, g);
+    box(0.43, 0.08, 0.03, hairM, 0, 2.02, -0.205, g);
   } else if (c.hair === 'spiky') {
-    topBox(0.06);
+    cap(false);
+    // Spikes rooted IN the cap: each base sits below the cap's top
+    // surface, so no spike floats. A swept row plus two front spikes.
+    box(0.44, 0.07, 0.05, hairM, 0, 2.04, 0.205, g); // short fringe base
     for (let i = -2; i <= 2; i++) {
-      box(0.07, 0.17, 0.07, hairM, i * 0.09, 2.20, 0, g, 0, 0, -i * 0.22);
+      box(0.075, 0.16, 0.075, hairM, i * 0.09, 2.18, -0.02, g, 0, 0, -i * 0.18);
     }
-    box(0.07, 0.14, 0.07, hairM, 0, 2.12, 0.20, g, 0.5, 0, 0);
+    box(0.07, 0.15, 0.07, hairM, -0.14, 2.16, 0.14, g, 0.35, 0, -0.15);
+    box(0.07, 0.15, 0.07, hairM, 0.14, 2.16, 0.14, g, 0.35, 0, 0.15);
   } else if (c.hair === 'curly') {
-    topBox(0.08);
-    const spots = [[-0.15, 0.12, 0.05], [0.15, 0.12, 0.05], [0, 0.16, -0.10], [-0.10, 0.13, 0.15], [0.10, 0.13, 0.15], [-0.20, 0.04, -0.02], [0.20, 0.04, -0.02], [0, 0.10, 0]];
-    for (const [x, y, z] of spots) box(0.15, 0.15, 0.15, hairM, x, hy + y, z, g);
+    cap(false);
+    // A tight dome of overlapping curls: rows step inward as they
+    // rise, every cube overlapping its neighbors — no scattered cubes.
+    const curls = [
+      [-0.16, 2.12, 0.10, 0.15], [0, 2.12, 0.12, 0.16], [0.16, 2.12, 0.10, 0.15],
+      [-0.16, 2.12, -0.10, 0.15], [0, 2.12, -0.10, 0.16], [0.16, 2.12, -0.10, 0.15],
+      [-0.11, 2.24, 0.02, 0.15], [0.11, 2.24, 0.02, 0.15], [0, 2.24, -0.08, 0.15],
+      [0, 2.33, 0.02, 0.14],
+      [-0.21, 2.02, 0.08, 0.12], [0.21, 2.02, 0.08, 0.12],
+    ];
+    for (const [x, y, z, s] of curls) box(s, s, s, hairM, x, y, z, g);
+    box(0.44, 0.06, 0.05, hairM, 0, 2.03, 0.205, g); // fringe line
   } else if (c.hair === 'long') {
-    topBox(0.10);
-    box(0.40, 0.52, 0.08, hairM, 0, 1.72, -0.24, g); // back panel
-    box(0.07, 0.42, 0.10, hairM, -0.23, 1.75, -0.05, g);
-    box(0.07, 0.42, 0.10, hairM, 0.23, 1.75, -0.05, g);
+    cap();
+    // Back fall: one wide slab from crown to mid-back, overlapping the
+    // head's back face, plus face-framing strands that touch the cheeks.
+    box(0.42, 0.62, 0.07, hairM, 0, 1.76, -0.235, g);
+    box(0.07, 0.50, 0.07, hairM, -0.20, 1.86, 0.14, g); // left face strand
+    box(0.07, 0.50, 0.07, hairM, 0.20, 1.86, 0.14, g); // right face strand
+    box(0.44, 0.06, 0.44, hairM, 0, hy + 0.10, 0, g); // crown volume
   } else if (c.hair === 'ponytail') {
-    topBox(0.10);
-    box(0.12, 0.46, 0.10, hairM, 0, 1.86, -0.30, g, 0.35, 0, 0);
-    box(0.14, 0.06, 0.12, hairM, 0, 2.08, -0.22, g); // tie
+    cap();
+    // Gathered tail: five overlapping segments stepping down and back
+    // from the crown to mid-back, so the tail reads as its own shape
+    // from the side instead of ending inside the head silhouette.
+    box(0.16, 0.05, 0.16, dark, 0, 2.13, -0.14, g); // tie band
+    box(0.15, 0.24, 0.14, hairM, 0, 2.05, -0.26, g, 0.25, 0, 0);
+    box(0.14, 0.24, 0.13, hairM, 0, 1.88, -0.31, g, 0.25, 0, 0);
+    box(0.13, 0.24, 0.12, hairM, 0, 1.71, -0.36, g, 0.25, 0, 0);
+    box(0.12, 0.22, 0.11, hairM, 0, 1.55, -0.40, g, 0.25, 0, 0);
+    box(0.10, 0.18, 0.10, hairM, 0, 1.42, -0.43, g, 0.25, 0, 0);
   } else if (c.hair === 'bun') {
-    topBox(0.10);
-    box(0.22, 0.22, 0.22, hairM, 0, 2.20, -0.10, g);
+    cap();
+    // Bun seated on the crown-back, overlapping the cap — a rounded
+    // block with a slightly smaller top block for a tied look.
+    box(0.24, 0.18, 0.22, hairM, 0, 2.19, -0.08, g);
+    box(0.18, 0.10, 0.17, hairM, 0, 2.31, -0.08, g);
   } else if (c.hair === 'afro') {
-    box(0.60, 0.32, 0.58, hairM, 0, 2.20, 0, g);
-    for (const [x, z] of [[-0.24, 0.20], [0.24, 0.20], [-0.24, -0.20], [0.24, -0.20]]) {
-      box(0.16, 0.16, 0.16, hairM, x, 2.10, z, g);
-    }
+    // Stepped dome: three layers narrowing as they rise, each layer
+    // overlapping the one below, plus side puffs touching the head.
+    box(0.58, 0.12, 0.56, hairM, 0, 2.10, 0, g);
+    box(0.52, 0.12, 0.50, hairM, 0, 2.20, 0, g);
+    box(0.40, 0.11, 0.38, hairM, 0, 2.30, 0, g);
+    box(0.26, 0.09, 0.24, hairM, 0, 2.38, 0, g);
+    box(0.12, 0.14, 0.30, hairM, -0.27, 2.00, 0, g);
+    box(0.12, 0.14, 0.30, hairM, 0.27, 2.00, 0, g);
   }
   g.userData.height = 2.07;
   return g;

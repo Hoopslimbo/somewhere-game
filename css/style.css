@@ -66,6 +66,9 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
 #auth-screen .btn.big { border-radius: 14px; padding: 14px 28px; font-size: 16px; }
 #auth-screen input, #auth-screen select { border-radius: 12px; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06); clip-path: none; font-weight: 500; }
 
+/* ---------- Boot loading (no signed-out flash) ---------- */
+#boot-loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--bg); color: var(--dim); font-size: 18px; font-weight: 600; z-index: 200; }
+
 /* ---------- Lobby ---------- */
 /* Fixed lobby: header, hero (character + friends), and tabs NEVER
    scroll away. ONLY the worlds area scrolls, inside its own region below
@@ -114,16 +117,44 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
 .world-row { display: flex; gap: 18px; overflow-x: auto; padding: 14px 4px 20px; scroll-snap-type: x proximity; scrollbar-width: thin; }
 .world-row::-webkit-scrollbar { height: 10px; }
 .world-row::-webkit-scrollbar-thumb { background: rgba(255,255,255,.22); border-radius: 999px; }
-.world-card { flex: 0 0 236px; scroll-snap-align: start; padding: 0; overflow: hidden; border-radius: 18px; border: 1px solid rgba(255,255,255,.10); background: rgba(16,22,44,.85); cursor: pointer; text-align: left; color: var(--text); box-shadow: 0 8px 24px rgba(0,0,0,.30); transition: transform var(--ease), box-shadow var(--ease); }
+.world-card { flex: 0 0 236px; scroll-snap-align: start; padding: 0; overflow: visible; border-radius: 18px; border: 1px solid rgba(255,255,255,.10); background: rgba(16,22,44,.85); cursor: pointer; text-align: left; color: var(--text); box-shadow: 0 8px 24px rgba(0,0,0,.30); transition: transform var(--ease), box-shadow var(--ease); position: relative; }
+/* Worlds/Servers tabs at the top of the worlds panel (like lobby tabs) */
+.panel-tabs { display: inline-flex; gap: 8px; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08); border-radius: 999px; padding: 5px; margin-bottom: 14px; }
+.panel-tab { padding: 8px 18px; border-radius: 999px; border: 1px solid transparent; background: transparent; color: rgba(255,255,255,.75); font-weight: 600; font-size: 14px; }
+.panel-tab:hover { background: rgba(255,255,255,.10); color: #fff; }
+.panel-tab.active { background: #fff; color: #0b1226; box-shadow: 0 4px 14px rgba(0,0,0,.35); }
+/* Tiny tab at the bottom of the screen that toggles the worlds panel */
+.worlds-tab { flex: none; align-self: center; margin: 0 0 12px; padding: 6px 18px; border-radius: 999px; border: 1px solid rgba(255,255,255,.14); background: rgba(10,15,32,.72); color: var(--text); font-weight: 600; font-size: 13px; z-index: 5; backdrop-filter: blur(12px); }
+.worlds-tab:hover { background: rgba(255,255,255,.14); }
+#lobby-screen.menu-open .worlds-tab { display: none; }
+/* Card "…" menu: button top-right of each card, dropdown below it */
+.card-menu { position: absolute; top: 8px; right: 8px; z-index: 6; }
+.card-menu-btn { width: 30px; height: 30px; border-radius: 50%; border: 1px solid rgba(255,255,255,.20); background: rgba(6,9,22,.75); color: #fff; font-size: 18px; font-weight: 900; line-height: 1; backdrop-filter: blur(8px); }
+.card-menu-btn:hover { background: rgba(255,255,255,.20); }
+.card-menu-list { display: none; position: absolute; top: 34px; right: 0; min-width: 170px; background: rgba(13,18,38,.97); border: 1px solid rgba(255,255,255,.14); border-radius: 14px; padding: 6px; box-shadow: 0 16px 40px rgba(0,0,0,.5); }
+.card-menu-list.open { display: block; }
+#card-menu-popover { position: fixed; top: 0; left: 0; right: auto; z-index: 200; }
+.card-menu-item { display: block; width: 100%; text-align: left; padding: 9px 12px; border: none; border-radius: 9px; background: transparent; color: var(--text); font-weight: 600; font-size: 13px; }
+.card-menu-item:hover { background: rgba(255,255,255,.12); }
+.card-menu-item.danger { color: #ff8a8a; }
+/* Server pre-invite picker: scrollable friends list with checkboxes */
+.invite-pick-list { max-height: 180px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding: 4px 0; }
+.invite-pick { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,.06); font-weight: 600; font-size: 14px; cursor: pointer; }
+.invite-pick:hover { background: rgba(255,255,255,.12); }
+.invite-pick input { width: 17px; height: 17px; flex: none; }
 .world-card:hover { transform: translateY(-3px); box-shadow: 0 14px 32px rgba(0,0,0,.40); }
 .world-card.selected { border-color: var(--sky-line); box-shadow: 0 0 0 3px rgba(142,201,255,.25), 0 14px 32px rgba(0,0,0,.40); }
-.world-card .card-art { width: 100%; height: 128px; display: block; border-bottom: 1px solid rgba(255,255,255,.08); }
+.world-card .card-art { width: 100%; height: 128px; display: block; border-bottom: 1px solid rgba(255,255,255,.08); border-radius: 18px 18px 0 0; }
 .world-card .card-info { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 4px; }
 .world-card .card-info b { font-size: 16px; font-weight: 700; }
 .world-card .card-info span { color: var(--dim); font-size: 12px; font-weight: 500; }
 .world-card .card-selected { color: var(--sky) !important; font-weight: 700; margin-top: 4px; }
 .world-empty { color: var(--dim); font-size: 14px; font-weight: 500; padding: 6px 0; }
 .cust-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 18px; }
+.cust-wrap { display: flex; gap: 24px; align-items: flex-start; }
+.cust-preview { flex: none; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.10); border-radius: 18px; padding: 10px; }
+.cust-preview canvas { display: block; border-radius: 10px; }
+@media (max-width: 700px) { .cust-wrap { flex-direction: column; } }
 .cust-group label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 10px; color: rgba(255,255,255,.75); letter-spacing: .2px; }
 .swatches { display: flex; flex-wrap: wrap; gap: 10px; }
 .swatch { width: 34px; height: 34px; border-radius: 12px; border: 2px solid rgba(255,255,255,.18); cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.35); transition: transform var(--ease), box-shadow var(--ease); }
@@ -170,7 +201,9 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
 #crosshair.target { color: var(--green); transform: translate(-50%, -50%) scale(1.4); text-shadow: 2px 2px 0 #000, 0 0 12px rgba(87,227,46,.9); }
 .prompt { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); background: rgba(6,9,22,.85); border: 3px solid var(--sky-line); clip-path: var(--cut-sm); padding: 10px 20px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px; filter: drop-shadow(4px 4px 0 rgba(0,0,0,.5)); }
 .center-toast { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); font-family: var(--display); font-size: 30px; font-weight: 900; font-style: italic; text-transform: uppercase; letter-spacing: 1px; color: #fff; text-shadow: 3px 3px 0 var(--accent), 6px 6px 0 rgba(0,0,0,.6); background: rgba(0,0,0,.35); padding: 12px 26px; clip-path: var(--cut-sm); }
-.hud-top { position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: flex-end; padding: 14px 18px; pointer-events: none; }
+.hud-top { position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: flex-start; padding: 14px 18px; pointer-events: none; }
+/* Dash separator between normal and permanent hotbar slots */
+.hotbar-sep { align-self: center; font-size: 22px; font-weight: 900; color: var(--dim); padding: 0 2px; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
 /* Health + hunger, BOTTOM LEFT (round 3 put them right — wrong) */
 .vitals-bl { position: absolute; left: 18px; bottom: 118px; display: flex; flex-direction: column; gap: 8px; background: rgba(6,9,22,.8); border: 3px solid var(--edge); clip-path: var(--cut); padding: 12px 14px; filter: drop-shadow(5px 5px 0 rgba(0,0,0,.5)); z-index: 5; }
 .vitals-bl .bar { width: 180px; }

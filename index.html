@@ -13,8 +13,12 @@
 <body>
 <div id="error-overlay" class="hidden"></div>
 
+<!-- Boot loading state: shown until the session check finishes, so the
+     auth screen never flashes a "signed out" state on reopen. -->
+<div id="boot-loading">Loading…</div>
+
 <!-- ============ AUTH ============ -->
-<section id="auth-screen" class="screen">
+<section id="auth-screen" class="screen hidden">
   <div class="auth-card">
     <h1>Somewhere</h1>
     <p class="tagline">A huge island. Your rules. Your world.</p>
@@ -76,25 +80,28 @@
     </aside>
   </div>
 
-  <div class="lobby-bottom">
+  <div class="lobby-bottom" id="lobby-bottom">
     <!-- PLAY TAB -->
     <div id="panel-play" class="lobby-panel">
+      <div class="panel-tabs">
+        <button id="tab-worlds" class="panel-tab active">Worlds</button>
+        <button id="tab-servers" class="panel-tab">Servers</button>
+      </div>
       <div class="section-head">
-        <h3>Your Worlds</h3>
+        <h3 id="worlds-panel-title">Your Worlds</h3>
         <button id="btn-new-world" class="btn small">+ New world</button>
+        <button id="btn-new-server" class="btn small hidden">+ New server</button>
       </div>
       <div id="worlds-list" class="world-row"></div>
-      <div class="section-head servers-head">
-        <h3>Shared Servers</h3>
-        <button id="btn-new-server" class="btn small">+ New server</button>
-      </div>
-      <div id="servers-list" class="world-row"></div>
+      <div id="servers-list" class="world-row hidden"></div>
       <p class="fine">Private only — no public servers. Worlds cap at 30. Servers have no cap. Scroll inside the worlds area to browse, then scroll a row sideways.</p>
     </div>
     <!-- CUSTOMIZE TAB -->
     <div id="panel-customize" class="lobby-panel hidden">
       <button class="btn small ghost menu-back">← Back to lobby</button>
       <h3>Customize your character</h3>
+      <div class="cust-wrap">
+      <div class="cust-preview"><canvas id="cust-canvas" width="280" height="350"></canvas></div>
       <div class="cust-grid">
         <div class="cust-group"><label>Skin color</label><div id="cust-skin" class="swatches"></div></div>
         <div class="cust-group"><label>Hair style</label><div id="cust-hair" class="chip-row"></div></div>
@@ -104,6 +111,7 @@
         <div class="cust-group"><label>Pants</label><div id="cust-pants" class="chip-row"></div></div>
         <div class="cust-group"><label>Pants color</label><div id="cust-pantscolor" class="swatches"></div></div>
         <div class="cust-group"><label>Shoe color</label><div id="cust-shoes" class="swatches"></div></div>
+      </div>
       </div>
       <button id="btn-randomize" class="btn small">Randomize</button>
     </div>
@@ -120,9 +128,6 @@
       <div class="settings-grid">
         <label>Brightness <input id="set-brightness" type="range" min="50" max="150" value="100"> <span id="brightness-val">100%</span></label>
         <label>Master audio <input id="set-audio" type="range" min="0" max="100" value="80"> <span id="audio-val">80%</span></label>
-        <label>Voice chat mode
-          <select id="set-voice"><option value="party">Party voice chat</option><option value="proximity">Proximity chat</option></select>
-        </label>
         <label>Microphone <select id="set-mic"><option>Default microphone</option></select></label>
       </div>
       <h4>Keybinds — click a key, then press a new one</h4>
@@ -131,9 +136,12 @@
         <label>Username <input id="set-username" type="text" maxlength="15"></label>
         <label>Profile picture <input id="set-pfp" type="file" accept="image/*"></label>
       </div>
-      <p class="fine">Controls: WASD move · Mouse look · Space jump · E interact · T chat · I inventory · B build mode · Q quick craft · H help · 1–7 hotbar · 8, 9, 0 permanent slots · Scroll to switch slots.</p>
+      <p class="fine">Controls: WASD move · Mouse look · Space jump · Right-click (or E) interact · Left-click chop / mine / place · Double-tap W sprint · C or T chat · I inventory · B build mode · Q quick craft · H help · Esc menu · 1–7 hotbar · 8, 9, 0 permanent slots · Scroll to switch slots.</p>
     </div>
   </div>
+
+  <!-- Tiny tab at the bottom of the screen: toggles the worlds panel. -->
+  <button id="worlds-tab" class="worlds-tab">▾ Worlds</button>
 
   <div id="world-dialog" class="dialog hidden">
     <div class="dialog-card">
@@ -142,11 +150,47 @@
       <label class="check"><input id="world-keepinv" type="checkbox"> Keep inventory on death</label>
       <label class="check"><input id="world-friendly" type="checkbox" checked> Friendly fire</label>
       <div id="server-invite-row" class="hidden">
-        <label>Pre-invite friends <input id="server-invites" type="text" placeholder="usernames, separated by commas"></label>
+        <p style="font-size:14px;font-weight:600;margin-bottom:8px">Pre-invite friends</p>
+        <div id="server-invite-list" class="invite-pick-list"></div>
       </div>
       <div class="dialog-actions">
         <button id="world-cancel" class="btn ghost">Cancel</button>
         <button id="world-create" class="btn primary">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="card-menu-popover" class="card-menu-list"></div>
+  <div id="confirm-dialog" class="dialog hidden">
+    <div class="dialog-card">
+      <h3 id="confirm-title">Delete?</h3>
+      <p id="confirm-text" class="fine"></p>
+      <div class="dialog-actions">
+        <button id="confirm-cancel" class="btn ghost">Cancel</button>
+        <button id="confirm-ok" class="btn primary">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="rename-dialog" class="dialog hidden">
+    <div class="dialog-card">
+      <h3 id="rename-title">Rename</h3>
+      <label>New name <input id="rename-input" type="text" maxlength="24"></label>
+      <div class="dialog-actions">
+        <button id="rename-cancel" class="btn ghost">Cancel</button>
+        <button id="rename-save" class="btn primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="card-settings-dialog" class="dialog hidden">
+    <div class="dialog-card">
+      <h3 id="card-settings-title">World settings</h3>
+      <label class="check"><input id="card-keepinv" type="checkbox"> Keep inventory on death</label>
+      <label class="check"><input id="card-friendly" type="checkbox"> Friendly fire</label>
+      <div class="dialog-actions">
+        <button id="card-settings-cancel" class="btn ghost">Cancel</button>
+        <button id="card-settings-save" class="btn primary">Save</button>
       </div>
     </div>
   </div>
@@ -161,6 +205,7 @@
   <div id="center-toast" class="center-toast hidden"></div>
 
   <div class="hud-top">
+    <button id="btn-pause" class="btn small ghost" style="pointer-events:auto">☰ Menu</button>
     <div class="hud-right">
       <div id="money" class="money"><svg class="di" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="#222" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="24" cy="24" r="14" fill="#f5c542"/><circle cx="24" cy="24" r="8" fill="#e0a91c"/></g></svg> 50</div>
       <div id="fuel-wrap" class="fuel hidden"><svg class="di" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="#222" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="14" y="8" width="20" height="32" rx="3" fill="#c23b3b"/><rect x="18" y="13" width="12" height="9" rx="1" fill="#e8e8e8"/></g></svg> <div class="bar small"><div id="fuel-fill" class="fill fuel"></div></div></div>
@@ -194,6 +239,20 @@
     </div>
     <div id="build-bar" class="build-bar hidden"></div>
     <div id="shop-panel" class="shop-panel hidden"></div>
+  </div>
+
+  <div id="pause-menu" class="dialog hidden">
+    <div class="dialog-card">
+      <h3>Paused</h3>
+      <p id="pause-world-name" class="fine"></p>
+      <label class="check"><input id="pause-keepinv" type="checkbox"> Keep inventory on death</label>
+      <label class="check"><input id="pause-friendly" type="checkbox"> Friendly fire</label>
+      <p class="fine">Settings save to this world right away.</p>
+      <div class="dialog-actions">
+        <button id="pause-resume" class="btn primary">Resume</button>
+        <button id="pause-lobby" class="btn ghost">Back to lobby</button>
+      </div>
+    </div>
   </div>
 </section>
 
