@@ -335,3 +335,32 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
 #game-screen .build-bar button.sel { background: var(--sky); color: #0b1226; border-color: transparent; }
 #game-screen .shop-panel { background: rgba(10,15,32,.92); border: 1px solid rgba(255,255,255,.12); border-radius: 20px; clip-path: none; filter: none; box-shadow: 0 24px 64px rgba(0,0,0,.5); backdrop-filter: blur(16px); }
 #game-screen .shop-panel h3 { color: #fff; }
+
+/* ---------- Fix batch 2 ---------- */
+/* Lobby character ALWAYS dead-center (Fortnite-style): the hero is a
+   fixed-height stage, the character block is absolutely centered in it,
+   and the friends panel is an overlay on the right — it can never push
+   the character off-center, at any width. */
+#lobby-screen .lobby-hero { position: relative; display: block; height: 480px; }
+#lobby-screen .lobby-center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 4; }
+#lobby-screen .friends-panel { position: absolute; right: 28px; top: 50%; transform: translateY(-50%); width: 300px; z-index: 5; }
+/* Worlds panel, Fortnite-style slide-up: in Play mode the panel is a
+   fixed full-screen sheet translated below the viewport when closed;
+   opening slides it UP to cover the whole lobby. In menu mode it
+   returns to its normal in-flow layout below the header. */
+#lobby-screen:not(.menu-open) .lobby-bottom { position: fixed; left: 0; right: 0; top: 0; bottom: 0; z-index: 25; margin: 0; border-radius: 0; padding: 70px 28px 28px; transform: translateY(102%); transition: transform .38s ease; overflow-y: auto; background: rgba(10,15,32,.96); }
+#lobby-screen:not(.menu-open).worlds-open .lobby-bottom { transform: translateY(0); }
+/* The little tab: bottom-center when closed, top-center when open. */
+#lobby-screen .worlds-tab { position: fixed; left: 50%; transform: translateX(-50%); bottom: 14px; margin: 0; z-index: 30; }
+#lobby-screen.worlds-open .worlds-tab { top: 16px; bottom: auto; }
+/* Selected-world + Play control below the character: bolder, slightly
+   larger, still clean — and the character stays centered regardless. */
+#lobby-screen .selected-world { font-weight: 800; font-size: 16px; }
+#lobby-screen #btn-play { font-size: 19px; padding: 16px 34px; font-weight: 800; }
+/* Workbench category tabs (LEGO Fortnite-style organization). */
+.craft-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 10px; }
+/* Inventory drag-to-reorder affordances. */
+#game-screen .inv-grid .slot[draggable="true"] { cursor: grab; }
+#game-screen .inv-grid .slot.drag-over { border-color: var(--sky-line); box-shadow: 0 0 0 3px rgba(142,201,255,.35); }
+/* Bedrock-style pause menu: full-width stacked buttons. */
+#game-screen .pause-card .pause-btn { width: 100%; text-align: center; }

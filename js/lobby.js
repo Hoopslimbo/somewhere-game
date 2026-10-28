@@ -251,21 +251,28 @@ function switchTab(tab) {
     $('panel-' + p).classList.toggle('hidden', p !== tab);
   }
   $('lobby-screen').classList.toggle('menu-open', tab !== 'play');
-  updateWorldsPanelVisibility();
+  // Leaving Play closes the slide-up worlds panel (its tab is hidden
+  // in menu mode anyway); returning to Play starts with it closed.
+  if (tab !== 'play') setWorldsOpen(false);
 }
-// Worlds panel access: (a) it sits below the hero and the worlds area
-// scrolls (Fortnite-style), and (b) a tiny tab at the bottom of the
-// screen toggles it. Scrolling down over the lobby also re-opens it.
-let worldsCollapsed = false;
-function updateWorldsPanelVisibility() {
-  const hide = worldsCollapsed && currentTab === 'play';
-  $('lobby-bottom').classList.toggle('hidden', hide);
-  $('worlds-tab').textContent = hide ? '▴ Worlds' : '▾ Worlds';
+// Worlds panel access, Fortnite-style: a small tab sits at the bottom
+// of the lobby screen. Tapping it OR scrolling down slides the panel
+// UP so it covers the whole lobby screen. While open, the tab sits at
+// the TOP of the panel — tap it again to slide back down. Scrolling
+// back up while the panel's own list is at its top also closes it.
+let worldsOpen = false;
+function setWorldsOpen(open) {
+  worldsOpen = open;
+  $('lobby-screen').classList.toggle('worlds-open', open);
+  $('worlds-tab').textContent = open ? '▾ Worlds' : '▴ Worlds';
 }
-$('worlds-tab').onclick = () => { worldsCollapsed = !worldsCollapsed; updateWorldsPanelVisibility(); };
+$('worlds-tab').onclick = () => setWorldsOpen(!worldsOpen);
 $('lobby-screen').addEventListener('wheel', (e) => {
-  if (worldsCollapsed && currentTab === 'play' && e.deltaY > 0) {
-    worldsCollapsed = false; updateWorldsPanelVisibility();
+  if (currentTab !== 'play') return;
+  if (worldsOpen) {
+    if (e.deltaY < 0 && $('lobby-bottom').scrollTop <= 0) setWorldsOpen(false);
+  } else if (e.deltaY > 0) {
+    setWorldsOpen(true);
   }
 }, { passive: true });
 // Worlds/Servers tabs at the TOP of the worlds panel (styled like the
@@ -414,7 +421,7 @@ $('confirm-ok').onclick = () => {
 let renameTarget = null; // { kind: 'world'|'server', entry }
 function openRename(entry, kind) {
   renameTarget = { entry, kind };
-  $('rename-title').textContent = kind === 'world' ? 'Rename world' : 'Rename server';
+  $('rename-title').textContent = kind === 'world' ? 'Rename World' : 'Rename Server';
   $('rename-input').value = entry.name;
   $('rename-dialog').classList.remove('hidden');
   $('rename-input').focus();
@@ -434,7 +441,7 @@ $('rename-save').onclick = () => {
 let settingsTarget = null; // { kind, entry }
 function openCardSettings(entry, kind) {
   settingsTarget = { entry, kind };
-  $('card-settings-title').textContent = kind === 'world' ? 'World settings' : 'Server settings';
+  $('card-settings-title').textContent = kind === 'world' ? 'World Settings' : 'Server Settings';
   $('card-keepinv').checked = !!entry.keepInv;
   $('card-friendly').checked = entry.friendly !== false;
   $('card-settings-dialog').classList.remove('hidden');
@@ -476,11 +483,11 @@ function renderWorlds() {
       ],
       onSelect: () => selectWorld(w),
       menuItems: [
-        { label: 'Rename world', action: () => openRename(w, 'world') },
-        { label: 'World settings', action: () => openCardSettings(w, 'world') },
+        { label: 'Rename World', action: () => openRename(w, 'world') },
+        { label: 'World Settings', action: () => openCardSettings(w, 'world') },
         {
-          label: 'Delete world', danger: true,
-          action: () => askConfirm('Delete world?', `"${w.name}" will be gone for good.`, 'Delete', () => {
+          label: 'Delete World', danger: true,
+          action: () => askConfirm('Delete World?', `"${w.name}" will be gone for good.`, 'Delete', () => {
             S.worlds = S.worlds.filter((x) => x.id !== w.id);
             save('somewhere_worlds', S.worlds);
             clearSelectionIf(w.id);
@@ -511,11 +518,11 @@ function renderServers() {
     const menuItems = [];
     if (mine) {
       menuItems.push(
-        { label: 'Rename server', action: () => openRename(s, 'server') },
-        { label: 'Server settings', action: () => openCardSettings(s, 'server') },
+        { label: 'Rename Server', action: () => openRename(s, 'server') },
+        { label: 'Server Settings', action: () => openCardSettings(s, 'server') },
         {
-          label: 'Delete server', danger: true,
-          action: () => askConfirm('Delete server?', `"${s.name}" will be gone for good.`, 'Delete', () => {
+          label: 'Delete Server', danger: true,
+          action: () => askConfirm('Delete Server?', `"${s.name}" will be gone for good.`, 'Delete', () => {
             S.servers = S.servers.filter((x) => x.id !== s.id);
             save('somewhere_servers', S.servers);
             clearSelectionIf(s.id);
@@ -526,8 +533,8 @@ function renderServers() {
     }
     // Leave is always available on servers, owner or not.
     menuItems.push({
-      label: 'Leave server',
-      action: () => askConfirm('Leave server?', `You will leave "${s.name}".`, 'Leave', () => {
+      label: 'Leave Server',
+      action: () => askConfirm('Leave Server?', `You will leave "${s.name}".`, 'Leave', () => {
         S.servers = S.servers.filter((x) => x.id !== s.id);
         save('somewhere_servers', S.servers);
         clearSelectionIf(s.id);
@@ -564,7 +571,7 @@ $('btn-new-server').onclick = () => openWorldDialog(true);
 let dialogIsServer = false;
 function openWorldDialog(isServer) {
   dialogIsServer = isServer;
-  $('world-dialog-title').textContent = isServer ? 'Create a server' : 'Create a world';
+  $('world-dialog-title').textContent = isServer ? 'Create a Server' : 'Create a World';
   $('server-invite-row').classList.toggle('hidden', !isServer);
   if (isServer) {
     // Pre-invites are picked from a scrollable friends list — no
@@ -704,12 +711,17 @@ function swatchRow(el, colors, current, onPick) {
     el.appendChild(b);
   }
 }
-function chipRow(el, options, current, onPick) {
+// Chip labels are display-capitalized: stored values stay lowercase
+// ('short', 'sweatpants') but the player never sees a lowercase label.
+// Labels are per-row: 'long' means Long hair in the hair row but Long
+// Sleeve in the shirt row, so a shared map would mislabel one of them.
+const chipLabel = (o, labels) => (labels && labels[o]) || (o.charAt(0).toUpperCase() + o.slice(1));
+function chipRow(el, options, current, onPick, labels) {
   el.innerHTML = '';
   for (const o of options) {
     const b = document.createElement('button');
     b.className = 'chip' + (o === current ? ' sel' : '');
-    b.textContent = o;
+    b.textContent = chipLabel(o, labels);
     b.onclick = () => { onPick(o); chipRow(el, options, o, onPick); };
     el.appendChild(b);
   }
@@ -718,9 +730,9 @@ function renderCustomize() {
   swatchRow($('cust-skin'), SKIN_TONES, S.char.skin, (c) => { S.char.skin = c; saveChar(); });
   chipRow($('cust-hair'), HAIR_STYLES, S.char.hair, (v) => { S.char.hair = v; saveChar(); });
   swatchRow($('cust-haircolor'), HAIR_COLORS, S.char.hairColor, (c) => { S.char.hairColor = c; saveChar(); });
-  chipRow($('cust-sleeve'), ['normal', 'long'], S.char.sleeve, (v) => { S.char.sleeve = v; saveChar(); });
+  chipRow($('cust-sleeve'), ['normal', 'long'], S.char.sleeve, (v) => { S.char.sleeve = v; saveChar(); }, { normal: 'Normal', long: 'Long Sleeve' });
   swatchRow($('cust-shirt'), SHIRT_COLORS, S.char.shirt, (c) => { S.char.shirt = c; saveChar(); });
-  chipRow($('cust-pants'), ['shorts', 'sweatpants'], S.char.pants, (v) => { S.char.pants = v; saveChar(); });
+  chipRow($('cust-pants'), ['shorts', 'sweatpants'], S.char.pants, (v) => { S.char.pants = v; saveChar(); }, { shorts: 'Shorts', sweatpants: 'Sweatpants' });
   swatchRow($('cust-pantscolor'), PANTS_COLORS, S.char.pantsColor, (c) => { S.char.pantsColor = c; saveChar(); });
   swatchRow($('cust-shoes'), SHOE_COLORS, S.char.shoes, (c) => { S.char.shoes = c; saveChar(); });
 }

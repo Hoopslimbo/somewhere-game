@@ -94,7 +94,7 @@
       </div>
       <div id="worlds-list" class="world-row"></div>
       <div id="servers-list" class="world-row hidden"></div>
-      <p class="fine">Private only — no public servers. Worlds cap at 30. Servers have no cap. Scroll inside the worlds area to browse, then scroll a row sideways.</p>
+      <p class="fine">Private only — no public servers. Worlds cap at 30. Servers have no cap. Tap the Worlds tab at the bottom — or scroll down — and this panel slides up over the lobby. Tap the tab again at the top, or scroll back up, to close it.</p>
     </div>
     <!-- CUSTOMIZE TAB -->
     <div id="panel-customize" class="lobby-panel hidden">
@@ -136,7 +136,7 @@
         <label>Username <input id="set-username" type="text" maxlength="15"></label>
         <label>Profile picture <input id="set-pfp" type="file" accept="image/*"></label>
       </div>
-      <p class="fine">Controls: WASD move · Mouse look · Space jump · Right-click (or E) interact · Left-click chop / mine / place · Double-tap W sprint · C or T chat · I inventory · B build mode · Q quick craft · H help · Esc menu · 1–7 hotbar · 8, 9, 0 permanent slots · Scroll to switch slots.</p>
+      <p class="fine">Controls: WASD Move · Mouse Look · Space Jump · Right-Click (or E) Interact · Hold Left-Click to Chop / Mine · Left-Click Place · Double-Tap W Sprint · C or T Chat · I Inventory · B Build Mode · Q Quick Craft · H Help · Esc Menu · 1–7 Hotbar · 8, 9, 0 Permanent Slots · Scroll to Switch Slots.</p>
     </div>
   </div>
 
@@ -145,7 +145,7 @@
 
   <div id="world-dialog" class="dialog hidden">
     <div class="dialog-card">
-      <h3 id="world-dialog-title">Create a world</h3>
+      <h3 id="world-dialog-title">Create a World</h3>
       <label>World name <input id="world-name" type="text" maxlength="24" placeholder="My island"></label>
       <label class="check"><input id="world-keepinv" type="checkbox"> Keep inventory on death</label>
       <label class="check"><input id="world-friendly" type="checkbox" checked> Friendly fire</label>
@@ -185,7 +185,7 @@
 
   <div id="card-settings-dialog" class="dialog hidden">
     <div class="dialog-card">
-      <h3 id="card-settings-title">World settings</h3>
+      <h3 id="card-settings-title">World Settings</h3>
       <label class="check"><input id="card-keepinv" type="checkbox"> Keep inventory on death</label>
       <label class="check"><input id="card-friendly" type="checkbox"> Friendly fire</label>
       <div class="dialog-actions">
@@ -233,7 +233,6 @@
       <div id="inv-grid" class="inv-grid"></div>
       <div class="inv-actions">
         <button id="btn-quickcraft" class="btn small">Quick craft (Q)</button>
-        <button id="btn-craft" class="btn small">Workbench</button>
       </div>
       <div id="craft-list" class="craft-list"></div>
     </div>
@@ -242,15 +241,25 @@
   </div>
 
   <div id="pause-menu" class="dialog hidden">
-    <div class="dialog-card">
-      <h3>Paused</h3>
+    <div class="dialog-card pause-card">
+      <h3>Game Menu</h3>
       <p id="pause-world-name" class="fine"></p>
-      <label class="check"><input id="pause-keepinv" type="checkbox"> Keep inventory on death</label>
-      <label class="check"><input id="pause-friendly" type="checkbox"> Friendly fire</label>
-      <p class="fine">Settings save to this world right away.</p>
+      <button id="pause-resume" class="btn primary pause-btn">Resume</button>
+      <button id="pause-settings-btn" class="btn pause-btn">Settings</button>
+      <button id="pause-savequit" class="btn ghost pause-btn">Save and Quit</button>
+    </div>
+  </div>
+
+  <div id="pause-settings" class="dialog hidden">
+    <div class="dialog-card">
+      <h3>Settings</h3>
+      <label>Brightness <input id="pause-set-brightness" type="range" min="50" max="150" value="100"> <span id="pause-brightness-val">100%</span></label>
+      <label>Master Audio <input id="pause-set-audio" type="range" min="0" max="100" value="80"> <span id="pause-audio-val">80%</span></label>
+      <label class="check"><input id="pause-set-keepinv" type="checkbox"> Keep Inventory on Death</label>
+      <label class="check"><input id="pause-set-friendly" type="checkbox"> Friendly Fire</label>
+      <p class="fine">World settings save to this world right away.</p>
       <div class="dialog-actions">
-        <button id="pause-resume" class="btn primary">Resume</button>
-        <button id="pause-lobby" class="btn ghost">Back to lobby</button>
+        <button id="pause-settings-back" class="btn primary">Back</button>
       </div>
     </div>
   </div>

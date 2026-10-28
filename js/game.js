@@ -226,7 +226,7 @@ function initScene() {
   spr.scale.set(2.6, 0.65, 1); spr.position.y = 2.35;
   player.add(spr);
 
-  camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 800);
+  camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 2500);
   scene.add(camera); // needed so the held-tool viewmodel (a camera child) renders
   buildViewmodel();
   bindInput();
@@ -266,6 +266,7 @@ function bindInput() {
       lastForwardDown = now;
     }
     if (e.code === 'Escape') {
+      if (pauseSettingsOpen) { backToPauseMenu(); return; }
       if (pauseOpen) { closePause(); return; }
       if (!$('inv-panel').classList.contains('hidden') || !$('shop-panel').classList.contains('hidden') ||
           !$('help-panel').classList.contains('hidden') || buildMode) {
@@ -325,7 +326,12 @@ function bindInput() {
     P.yaw -= e.movementX * 0.0024;
     P.pitch = Math.max(-1.2, Math.min(0.9, P.pitch - e.movementY * 0.0024));
   });
-  // No context menu in-game: right-click is Interact, not a browser menu.
+  // No context menu ANYWHERE in the game screen: right-click is
+  // Interact, not a browser menu. The old canvas-only listener missed
+  // clicks over HUD/prompt/panel overlays, so right-clicking a
+  // workbench could still pop the browser's white menu — suppressing
+  // at the game-screen level (capture) covers canvas and overlays.
+  $('game-screen').addEventListener('contextmenu', (e) => e.preventDefault(), true);
   $('game-canvas').addEventListener('contextmenu', (e) => e.preventDefault());
   $('game-canvas').addEventListener('mousedown', (e) => {
     // A mouse menu open means the cursor is out and look is stopped —
@@ -338,6 +344,8 @@ function bindInput() {
     }
     if (e.button === 0) {
       if (buildMode) { placeGhostPiece(); return; }
+      // Chop/mine need a HOLD, not a spam-click (see startHoldAction).
+      if (target && (target.kind === 'tree' || target.kind === 'rock')) { startHoldAction(); return; }
       onPrimaryAction();
     } else if (e.button === 2) {
       if (buildMode) { setBuildMode(false); return; }
@@ -347,6 +355,10 @@ function bindInput() {
   document.addEventListener('pointerlockchange', () => {
     locked = document.pointerLockElement === $('game-canvas');
   });
+  // Releasing left click always ends a chop/mine hold, wherever the
+  // release happens (including over a panel or outside the window).
+  document.addEventListener('mouseup', (e) => { if (e.button === 0) stopHoldAction(); });
+  window.addEventListener('blur', stopHoldAction);
   document.addEventListener('wheel', (e) => {
     if (!started || chatOpen) return;
     selSlot = (selSlot + (e.deltaY > 0 ? 1 : 9)) % 10;
@@ -364,9 +376,20 @@ function bindInput() {
   });
   $('btn-pause').onclick = () => openPause();
   $('pause-resume').onclick = () => closePause();
-  $('pause-lobby').onclick = () => backToLobby();
-  $('pause-keepinv').onchange = (e) => savePauseSettings();
-  $('pause-friendly').onchange = (e) => savePauseSettings();
+  $('pause-settings-btn').onclick = () => openPauseSettings();
+  $('pause-settings-back').onclick = () => backToPauseMenu();
+  $('pause-savequit').onclick = () => saveAndQuit();
+  $('pause-set-keepinv').onchange = () => savePauseSettings();
+  $('pause-set-friendly').onchange = () => savePauseSettings();
+  $('pause-set-brightness').oninput = (e) => {
+    S.settings.brightness = +e.target.value; save('somewhere_settings', S.settings);
+    $('pause-brightness-val').textContent = e.target.value + '%';
+    document.querySelectorAll('canvas').forEach((c) => { c.style.filter = `brightness(${S.settings.brightness}%)`; });
+  };
+  $('pause-set-audio').oninput = (e) => {
+    S.settings.audio = +e.target.value; save('somewhere_settings', S.settings);
+    $('pause-audio-val').textContent = e.target.value + '%';
+  };
 }
 function requestGameLock() {
   if (!started || $('game-screen').classList.contains('hidden')) return;
@@ -379,31 +402,62 @@ function requestGameLock() {
 function renderHelp() {
   $('help-panel').innerHTML = `<h3>How to play</h3>
   <p><b>WASD</b> move · <b>Double-tap W</b> sprint (hold W) · <b>Mouse</b> look · <b>Space</b> jump<br>
-  <b>Right-click</b> (or <b>E</b>) interact · <b>Left-click</b> chop / mine / place<br>
+  <b>Right-click</b> (or <b>E</b>) interact · <b>Hold left-click</b> to chop / mine · <b>Left-click</b> place<br>
   <b>1–7</b> hotbar · <b>8, 9, 0</b> permanent slots (car key, house key) · <b>Scroll</b> switch slot<br>
   <b>I</b> backpack · <b>B</b> build mode · <b>Q</b> quick craft · <b>C</b> or <b>T</b> chat · <b>F</b> eat selected food · <b>Esc</b> menu · <b>H</b> this help</p>
   <p>Start: chop trees with your wooden axe. Use the gold bench near spawn to craft walls, tools and machines. Place a vehicle machine, craft a car, and your car key appears in a permanent slot. Watch hunger — eat apples to stay full and regen health.</p>`;
 }
 
-// ---------- Pause menu ----------
+// ---------- Pause menu (Minecraft Bedrock-style) ----------
+// The Menu button opens a pause screen — Resume, Settings, and Save
+// and Quit at the bottom. It does NOT jump straight into settings.
+// Settings opens a submenu (world toggles + brightness/audio) with a
+// Back button returning to the pause screen; Save and Quit saves the
+// world, then returns to the lobby.
+let pauseSettingsOpen = false;
 function openPause() {
   if (!started || chatOpen) return;
-  pauseOpen = true;
+  // The pause screen stands alone: opening it from the Menu button
+  // while inventory/workbench is open must not stack dialogs.
+  closePanels();
+  stopHoldAction();
+  pauseOpen = true; pauseSettingsOpen = false;
   $('pause-world-name').textContent = W ? ('World: ' + W.name) : '';
-  $('pause-keepinv').checked = !!(W && W.keepInv);
-  $('pause-friendly').checked = W ? W.friendly !== false : true;
   $('pause-menu').classList.remove('hidden');
+  $('pause-settings').classList.add('hidden');
   document.exitPointerLock?.();
 }
-function closePause() {
-  pauseOpen = false;
+function openPauseSettings() {
+  if (!pauseOpen) return;
+  pauseSettingsOpen = true;
+  $('pause-set-keepinv').checked = !!(W && W.keepInv);
+  $('pause-set-friendly').checked = W ? W.friendly !== false : true;
+  $('pause-set-brightness').value = S.settings.brightness || 100;
+  $('pause-brightness-val').textContent = (S.settings.brightness || 100) + '%';
+  $('pause-set-audio').value = S.settings.audio ?? 80;
+  $('pause-audio-val').textContent = (S.settings.audio ?? 80) + '%';
   $('pause-menu').classList.add('hidden');
+  $('pause-settings').classList.remove('hidden');
+}
+function backToPauseMenu() {
+  pauseSettingsOpen = false;
+  $('pause-settings').classList.add('hidden');
+  $('pause-menu').classList.remove('hidden');
+}
+function closePause() {
+  pauseOpen = false; pauseSettingsOpen = false;
+  $('pause-menu').classList.add('hidden');
+  $('pause-settings').classList.add('hidden');
   requestGameLock();
+}
+function saveAndQuit() {
+  saveGame();
+  backToLobby();
 }
 function savePauseSettings() {
   if (!W) return;
-  W.keepInv = $('pause-keepinv').checked;
-  W.friendly = $('pause-friendly').checked;
+  W.keepInv = $('pause-set-keepinv').checked;
+  W.friendly = $('pause-set-friendly').checked;
   // Persist to the lobby's saved world/server entry for this world.
   const worlds = load('somewhere_worlds', []);
   const w = worlds.find((x) => x.id === W.id);
@@ -413,8 +467,9 @@ function savePauseSettings() {
   if (s) { s.keepInv = W.keepInv; s.friendly = W.friendly; save('somewhere_servers', servers); }
 }
 function backToLobby() {
-  pauseOpen = false;
+  pauseOpen = false; pauseSettingsOpen = false;
   $('pause-menu').classList.add('hidden');
+  $('pause-settings').classList.add('hidden');
   if (RAF) { cancelAnimationFrame(RAF); RAF = null; }
   started = false;
   saveGame();
@@ -469,19 +524,22 @@ function updateDayNight() {
 }
 function groundY(x, z, yHint) {
   const h = heightAt(x, z, W.seed);
-  // Cave floors: the terrain is NOT carved, so a cave chamber sits
-  // inside the hillside. The chamber floor must only apply when the
-  // caller is actually below the hillside surface (walking inside) —
-  // otherwise a player walking on TOP of the mound would snap down
-  // through the roof into the chamber (the phase-through bug). Callers
+  // Cave floors: the terrain IS carved now (a tunnel notch in the
+  // hillside), so heightAt already returns the tunnel floor inside a
+  // cave. This branch is a safety net for the chamber: it must only
+  // apply when the caller is actually below the hillside surface
+  // (walking inside) — otherwise a player walking on TOP of the tunnel
+  // roof would snap down through it (the phase-through bug). Callers
   // at ground level (drops, placement) pass no hint and get the old
   // floor behavior; the player/car pass their current height.
+  // Local axes: +z points OUT of the mouth, -z runs into the hill for
+  // c.len units; the floor descends 0.12 per unit into the hill.
   if (world && world.caves) {
     for (const c of world.caves) {
       const dx = x - c.x, dz = z - c.z;
       const lx = dx * Math.cos(c.facing) - dz * Math.sin(c.facing);
       const lz = dx * Math.sin(c.facing) + dz * Math.cos(c.facing);
-      if (Math.abs(lx) < 1.85 && lz > -2.8 && lz < 2.9) {
+      if (Math.abs(lx) < 2.1 && lz > -(c.len || 2.8) && lz < 2.9) {
         if (yHint === undefined || yHint < h - 1.2) {
           return Math.max(c.floorY - lz * (c.slope || 0), -0.35);
         }
@@ -824,7 +882,9 @@ function findTarget() {
   for (const t of world.trees) consider(t.x, t.h + t.trunkH * 0.6, t.z, Math.max(1.0, 1.1 * (t.scale || 1)), { kind: 'tree', ref: t });
   for (const r of world.rocks) consider(r.x, r.h + 0.6, r.z, (r.radius || 0.7) + 0.35, { kind: 'rock', ref: r });
   for (const s of world.groundStones) consider(s.x, s.h + 0.2, s.z, 0.55, { kind: 'groundstone', ref: s });
-  for (const c of world.chests) if (!c.opened) consider(c.x, c.h + 0.6, c.z, 1.0, { kind: 'chest', ref: c });
+  // Loot chests stay targetable after opening, so you can reopen one
+  // to take leftovers or put your own items back in.
+  for (const c of world.chests) consider(c.x, c.h + 0.6, c.z, 1.0, { kind: 'chest', ref: c });
   for (const it of world.interactables) {
     const rad = it.type === 'goldbench' ? 1.7 : it.type === 'shop' ? 2.4 : 1.9;
     consider(it.x, groundY(it.x, it.z) + 1, it.z, rad, { kind: it.type, ref: it });
@@ -838,10 +898,10 @@ function targetLabel(t) {
   // Unmistakable affordance: the verb AND the button, per target.
   // LEFT = attack/chop/mine, RIGHT = interact — never just "click".
   switch (t.kind) {
-    case 'tree': return 'Tree — Left click to chop';
-    case 'rock': return t.ref.iron ? 'Iron ore — Left click to mine (needs pickaxe)' : 'Stone — Left click to mine (needs pickaxe)';
+    case 'tree': return 'Tree — Hold left click to chop';
+    case 'rock': return t.ref.iron ? 'Iron ore — Hold left click to mine (needs pickaxe)' : 'Stone — Hold left click to mine (needs pickaxe)';
     case 'groundstone': return 'Stone — Right click to pick up';
-    case 'chest': return 'Loot chest — Right click to open';
+    case 'chest': return (t.ref.contents && t.ref.contents.length === 0) ? 'Empty loot chest — Right click to open' : 'Loot chest — Right click to open';
     case 'goldbench': return 'Gold bench — Right click to craft (unbreakable)';
     case 'shop': return 'Shop — Right click to buy & sell';
     case 'carshop': return 'Car shop — Right click to repair or trade in';
@@ -901,6 +961,38 @@ function updateTargetPrompt() {
   }
 }
 
+// ---------- Hold to chop / mine ----------
+// Chopping and mining require HOLDING left click: hits repeat while
+// held and stop on release. A lone click does NOTHING — the first hit
+// only fires 260ms into a continuous hold, so spam-clicking can never
+// chop a tree or mine a rock. Smash/harvest/hoe stay single-click.
+let holdTimer = null, holdKind = null, holdRef = null;
+function startHoldAction() {
+  if (!target || (target.kind !== 'tree' && target.kind !== 'rock')) return;
+  stopHoldAction();
+  holdKind = target.kind; holdRef = target.ref;
+  const tick = () => {
+    // Still holding the SAME tree/rock, still in the world, with a
+    // valid tool? Anything else ends the hold with no progress.
+    const list = holdKind === 'tree' ? world.trees : world.rocks;
+    if (!target || target.kind !== holdKind || target.ref !== holdRef || !list.includes(holdRef)) { stopHoldAction(); return; }
+    const sel = selectedItem();
+    if (holdKind === 'tree') {
+      if (!sel || ITEMS[sel.id]?.tool !== 'axe') { stopHoldAction(); return; }
+      triggerSwing(); chopTree(target.ref, sel);
+    } else {
+      if (!sel || ITEMS[sel.id]?.tool !== 'pickaxe') { stopHoldAction(); return; }
+      triggerSwing(); mineRock(target.ref, sel);
+    }
+    holdTimer = setTimeout(tick, 420); // repeat swings while held
+  };
+  holdTimer = setTimeout(tick, 260);
+}
+function stopHoldAction() {
+  if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+  holdKind = null; holdRef = null;
+}
+
 // ---------- Primary action (LEFT click: attack / chop / mine) ----------
 function onPrimaryAction() {
   if (buildMode) { placeGhostPiece(); return; }
@@ -938,10 +1030,7 @@ function doInteract(source) {
   }
   if (!target) return;
   if (target.kind === 'chest') {
-    const c = target.ref;
-    c.opened = true;
-    c.group.children[1].position.y = 1.1; c.group.children[1].rotation.z = -0.7;
-    for (const l of c.loot) addItem(l.id, l.n);
+    openLootChest(target.ref, source);
   } else if (target.kind === 'goldbench' || (target.kind === 'placed' && target.ref.itemId === 'workbench')) {
     openCraft(false, source === 'mouse' ? { by: 'mouse', key: null } : { by: 'key', key: S.keybinds.interact });
   } else if (target.kind === 'shop') {
@@ -969,6 +1058,7 @@ function doInteract(source) {
   // is deliberately gone.)
 }
 function chopTree(t, toolSlot) {
+  if (!world.trees.includes(t)) return; // already felled — never pay out twice
   t.hp -= toolSlot ? ITEMS[toolSlot.id].power : 1;
   const isTempStone = toolSlot && ITEMS[toolSlot.id].temp;
   if (!isTempStone) damageTool(toolSlot);
@@ -997,6 +1087,7 @@ function chopTree(t, toolSlot) {
   updateHUD();
 }
 function mineRock(r, toolSlot) {
+  if (!world.rocks.includes(r)) return; // already mined — never pay out twice
   r.hp -= ITEMS[toolSlot.id].power;
   damageTool(toolSlot);
   if (r.hp <= 0) {
@@ -1711,6 +1802,48 @@ function buyLand() {
   chatMsg('System', 'Land bought! Your House Key is in a permanent slot (press 9). Place a House Kit inside the red line.', true);
   updateHUD(); saveGame();
 }
+// ---------- Loot chest container ----------
+// A found chest opens a real container UI: look through its contents,
+// take stacks into your inventory (Take / Take All), or put your own
+// items back in. Contents are generated from the chest's loot table on
+// first open and persist per chest in the world save.
+function openLootChest(c, source) {
+  openMousePanel(source);
+  if (!c.contents) {
+    c.contents = c.loot.map((l) => ({ ...l }));
+    c.opened = true;
+    c.group.children[1].position.y = 1.1; c.group.children[1].rotation.z = -0.7;
+    saveGame();
+  }
+  const panel = $('shop-panel');
+  panel.classList.remove('hidden');
+  const render = () => {
+    panel.innerHTML = `<h3>Loot Chest</h3>
+      <div>${c.contents.length ? c.contents.map((s, i) => `<div class="craft-row"><span><span class="ic sm">${itemIcon(s.id)}</span> ${ITEMS[s.id].name} ×${s.n}</span><button class="btn small" data-take="${i}">Take</button></div>`).join('') : '<p class="fine">Empty. You can put items back in here.</p>'}</div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn small" id="take-all">Take All</button><button class="btn small" id="deposit-loot">Deposit Selected Item</button><button class="btn small ghost panel-close">Close</button></div>`;
+    panel.querySelectorAll('[data-take]').forEach((b) => b.onclick = () => {
+      const s = c.contents[+b.dataset.take];
+      if (addItem(s.id, s.n)) { c.contents.splice(+b.dataset.take, 1); render(); updateHUD(); saveGame(); }
+    });
+    $('take-all').onclick = () => {
+      for (let i = c.contents.length - 1; i >= 0; i--) {
+        if (addItem(c.contents[i].id, c.contents[i].n)) c.contents.splice(i, 1);
+        else break; // inventory full — leave the rest in the chest
+      }
+      render(); updateHUD(); saveGame();
+    };
+    $('deposit-loot').onclick = () => {
+      const sel = selectedItem();
+      if (!sel || selSlot >= 7) { toast('Select a hotbar item to deposit.'); return; }
+      if (c.contents.length >= 40) { toast('Chest is full (40 slots).'); return; }
+      c.contents.push({ ...sel });
+      P.hotbar[selSlot] = null; P.hotbar = P.hotbar.filter(Boolean);
+      render(); updateHUD(); saveGame();
+    };
+  };
+  render();
+}
+
 function openStorage(piece, source) {
   openMousePanel(source);
   const panel = $('shop-panel');
@@ -1751,6 +1884,11 @@ function toggleInventory(force, opened) {
     craftOpened = null;
   }
 }
+// Drag-to-reorder state: which panel slot a drag started from, and a
+// timestamp so the click that follows a drop never also fires a
+// click-action on the drop target.
+let dragSrc = null, dragDroppedAt = 0;
+function invArr(kind) { return kind === 'hot' ? P.hotbar : P.inv; }
 function renderInvGrid() {
   const grid = $('inv-grid');
   grid.innerHTML = '';
@@ -1765,7 +1903,33 @@ function renderInvGrid() {
     } else {
       d.innerHTML = `<span class="lbl">${kind === 'perm' ? 'Permanent' : 'Empty'}</span>`;
     }
+    // Rearrangeable: drag any hotbar/normal slot onto another to swap
+    // their contents (positions preserved, no compacting). Permanent
+    // slots never appear in this panel, so they can never be dragged.
+    d.draggable = true;
+    d.dataset.kind = kind; d.dataset.idx = idx;
+    d.ondragstart = (e) => {
+      dragSrc = { kind, idx };
+      try { e.dataTransfer.setData('text/plain', kind + ':' + idx); } catch { /* ignore */ }
+      e.dataTransfer.effectAllowed = 'move';
+    };
+    d.ondragover = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; d.classList.add('drag-over'); };
+    d.ondragleave = () => d.classList.remove('drag-over');
+    d.ondrop = (e) => {
+      e.preventDefault();
+      d.classList.remove('drag-over');
+      if (!dragSrc || (dragSrc.kind === kind && dragSrc.idx === idx)) { dragSrc = null; return; }
+      const a = invArr(dragSrc.kind), b = invArr(kind);
+      const tmp = a[dragSrc.idx];
+      a[dragSrc.idx] = b[idx];
+      b[idx] = tmp;
+      dragSrc = null;
+      dragDroppedAt = performance.now();
+      renderInvGrid(); updateHUD(); saveGame();
+    };
+    d.ondragend = () => { dragSrc = null; dragDroppedAt = performance.now(); };
     d.onclick = () => {
+      if (performance.now() - dragDroppedAt < 200) return; // just dropped — not a click
       if (kind === 'hot') { selSlot = idx; }
       else if (kind === 'perm') { selSlot = 7 + idx; }
       else if (slot) {
@@ -1788,21 +1952,49 @@ function renderInvGrid() {
   note.className = 'fine';
   note.style.gridColumn = '1 / -1';
   note.textContent = P.hasBackpack
-    ? `Backpack: 40 normal slots. Permanent slots (car key, house key) live in the top bar — press 8, 9, 0 to select them.`
-    : `10 normal slots — craft a Backpack (4 leather) to expand to 40. Permanent slots (car key, house key) live in the top bar — press 8, 9, 0 to select them.`;
+    ? `Backpack: 40 normal slots. Drag items to rearrange them. Permanent slots (car key, house key) live in the top bar — press 8, 9, 0 to select them.`
+    : `10 normal slots — craft a Backpack (4 leather) to expand to 40. Drag items to rearrange them. Permanent slots (car key, house key) live in the top bar — press 8, 9, 0 to select them.`;
   grid.appendChild(note);
 }
 $('inv-close').onclick = () => { toggleInventory(false); requestGameLock(); };
 $('btn-quickcraft').onclick = () => openCraft(true, { by: 'mouse', key: null });
-$('btn-craft').onclick = () => openCraft(false, { by: 'mouse', key: null });
+// No remote workbench button: the normal workbench menu opens ONLY by
+// interacting with a workbench object in the world (right-click it).
+// Quick craft (Q / the button above) stays as the limited anywhere set.
+// Workbench categories, LEGO Fortnite-style: one flat list is hard to
+// scan, so recipes sit under category tabs. Same recipes, same costs.
+let craftCat = 'All';
+const CRAFT_CATS = [
+  ['Tools', ['axe_stone', 'pickaxe_wood', 'pickaxe', 'shovel', 'hoe', 'backpack']],
+  ['Building', ['wall_wood', 'wall_brick', 'wall_steel', 'wall_window', 'wall_door', 'wall_ice', 'floor', 'roof']],
+  ['Furniture', ['chest', 'house_kit']],
+  ['Machines', ['workbench', 'vehicle_machine', 'gas_pump']],
+  ['Materials', ['glass', 'ice']],
+];
 function openCraft(quick, opened) {
   // Mouse-opened craft ignores the Q key; keyboard-opened craft
   // toggles shut on Q. A button click is a mouse open.
   toggleInventory(true, opened || invOpened || { by: 'mouse', key: null });
   craftOpened = { ...(opened || invOpened || { by: 'mouse', key: null }), quick: !!quick };
   const list = $('craft-list');
-  const recipes = quick ? QUICK_RECIPES : RECIPES;
-  list.innerHTML = `<h4>${quick ? 'Quick craft (anywhere)' : 'Workbench — same stuff at every workbench'}</h4>`;
+  list.innerHTML = `<h4>${quick ? 'Quick Craft (Anywhere)' : 'Workbench — Same Stuff at Every Workbench'}</h4>`;
+  if (!quick) {
+    const tabs = document.createElement('div');
+    tabs.className = 'craft-tabs';
+    for (const [name] of [['All'], ...CRAFT_CATS]) {
+      const b = document.createElement('button');
+      b.className = 'chip' + (craftCat === name ? ' sel' : '');
+      b.textContent = name;
+      b.onclick = () => { craftCat = name; openCraft(false, craftOpened); };
+      tabs.appendChild(b);
+    }
+    list.appendChild(tabs);
+  }
+  let recipes = quick ? QUICK_RECIPES : RECIPES;
+  if (!quick && craftCat !== 'All') {
+    const ids = CRAFT_CATS.find(([n]) => n === craftCat)[1];
+    recipes = recipes.filter(([id]) => ids.includes(id));
+  }
   for (const [id, cost, label] of recipes) {
     const can = Object.entries(cost).every(([c, n]) => countOf(c) >= n);
     const row = document.createElement('div');
@@ -1820,6 +2012,7 @@ function openCraft(quick, opened) {
   }
 }
 function closePanels() {
+  stopHoldAction();
   $('inv-panel').classList.add('hidden');
   $('shop-panel').classList.add('hidden');
   $('help-panel').classList.add('hidden');
@@ -1919,6 +2112,9 @@ function saveGame() {
     hasBackpack: P.hasBackpack, landOwned: P.landOwned,
     placed: placed.map((p) => ({ itemId: p.itemId, x: p.x, z: p.z, y: p.y, color: p.color, contents: p.contents })),
     crops: crops.filter((c) => c.seed).map((c) => ({ x: c.x, z: c.z, seed: c.seed, planted: c.planted })),
+    // Loot chest states, matched back by position on load (chest
+    // placement is deterministic per seed, so positions are stable).
+    chests: world ? world.chests.map((c) => ({ x: c.x, z: c.z, opened: !!c.opened, contents: c.contents || null })) : [],
   });
 }
 function loadSave() {
@@ -1943,6 +2139,15 @@ function loadSave() {
       new THREE.MeshStandardMaterial({ color: 0x4a3220, roughness: 1 }));
     soil.position.set(c.x, y + 0.06, c.z); scene.add(soil);
     crops.push({ x: c.x, z: c.z, y, seed: c.seed, planted: c.planted, stage: -1, mesh: soil, sprout: null });
+  }
+  // Restore loot chest contents/open state (unopened chests keep
+  // their loot table and generate contents on first open).
+  for (const sc of s.chests || []) {
+    const c = world.chests.find((x) => x.x === sc.x && x.z === sc.z);
+    if (!c) continue;
+    c.opened = !!sc.opened;
+    c.contents = sc.contents || null;
+    if (c.opened) { c.group.children[1].position.y = 1.1; c.group.children[1].rotation.z = -0.7; }
   }
 }
 
@@ -2003,6 +2208,8 @@ window.__debug = {
   closePause: () => closePause(),
   get sprinting() { return doubleTapSprint; },
   openPause: () => openPause(),
+  openPauseSettings: () => openPauseSettings(),
   get pauseOpen() { return pauseOpen; },
+  get pauseSettingsOpen() { return pauseSettingsOpen; },
   get targetRing() { return targetRing; },
 };

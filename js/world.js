@@ -43,11 +43,55 @@ export const SEA = 0;
 // Rolling hills everywhere, mountain masses, sharp ridges, plateaus in the
 // high country, dunes in the desert, carved valleys, and a noisy island edge
 // so the coastline has bays and peninsulas instead of a straight shore.
+// Islands are WAY larger than the original 380-wide build: the landmass
+// radius roughly doubles (edge ~310–460) for ~4× the playable land area.
+// Cave carves (see below) are cut into the terrain itself, so heightAt
+// = base height + carve depression, keyed per seed.
+const caveCarvesBySeed = new Map();
+function carveDelta(x, z, seed) {
+  const carves = caveCarvesBySeed.get(seed >>> 0);
+  if (!carves) return 0;
+  let delta = 0;
+  for (const c of carves) {
+    const px = x - c.mx, pz = z - c.mz;
+    const u = px * c.dx + pz * c.dz; // 0 at mouth, + into the hill
+    const v = -px * c.dz + pz * c.dx; // sideways distance from tunnel axis
+    if (u < -1.5 || u > c.len + 1.5 || Math.abs(v) > c.halfW + 1.5) continue;
+    const along = sstep(-1.5, 1.0, u) * (1 - sstep(c.len - 2, c.len + 1.5, u));
+    const across = 1 - sstep(c.halfW, c.halfW + 1.5, Math.abs(v));
+    const shape = along * across;
+    if (!shape) continue;
+    // The tunnel floor sits near the mouth height and descends gently
+    // into the hill; the deeper the hillside rises above it, the deeper
+    // the cut — so the opening reads as a notch carved into the slope.
+    const floorH = c.mouthH - 0.12 * u;
+    const surface = baseHeightAt(x, z, seed);
+    delta -= Math.max(0, surface - floorH) * shape;
+  }
+  return delta;
+}
 export function heightAt(x, z, seed) {
+  return baseHeightAt(x, z, seed) + carveDelta(x, z, seed);
+}
+// True if (x, z) falls inside a cave carve (plus margin) — placements
+// (trees, rocks, chests, ground stones) skip carve ground so nothing
+// floats or sinks inside a tunnel mouth.
+export function inCaveCarve(x, z, seed, margin = 0) {
+  const carves = caveCarvesBySeed.get(seed >>> 0);
+  if (!carves) return false;
+  for (const c of carves) {
+    const px = x - c.mx, pz = z - c.mz;
+    const u = px * c.dx + pz * c.dz;
+    const v = -px * c.dz + pz * c.dx;
+    if (u >= -1.5 - margin && u <= c.len + 1.5 + margin && Math.abs(v) <= c.halfW + 1.5 + margin) return true;
+  }
+  return false;
+}
+function baseHeightAt(x, z, seed) {
   const r = Math.hypot(x, z);
   const edgeN = fbm(x * 0.004 + 300, z * 0.004, seed + 21);
-  const edgeR = 155 + (edgeN - 0.5) * 75;
-  const edge = 1 - sstep(edgeR - 12, edgeR + 30, r);
+  const edgeR = 310 + (edgeN - 0.5) * 150;
+  const edge = 1 - sstep(edgeR - 24, edgeR + 60, r);
   const hills = (fbm(x * 0.006, z * 0.006, seed) - 0.5) * 2; // -1..1
   let h = hills * 7.5;
   const mMask = sstep(0.46, 0.68, fbm(x * 0.0035 + 40, z * 0.0035, seed + 7));
@@ -65,9 +109,9 @@ export function heightAt(x, z, seed) {
   h -= vMask * 5;
   // Guaranteed massif: one real mountain range on EVERY island, so no seed
   // can roll an all-flat world. Seeded position, kept off the spawn area.
-  const mx = Math.sin(seed * 12.9898) * 90, mz = Math.cos(seed * 78.233) * 90;
+  const mx = Math.sin(seed * 12.9898) * 180, mz = Math.cos(seed * 78.233) * 180;
   const md = Math.hypot(x - mx, z - mz);
-  h += 30 * Math.exp(-(md * md) / (2 * 55 * 55)) * (0.7 + 0.3 * fbm(x * 0.01, z * 0.01, seed + 31));
+  h += 30 * Math.exp(-(md * md) / (2 * 110 * 110)) * (0.7 + 0.3 * fbm(x * 0.01, z * 0.01, seed + 31));
   return h * edge - 3.2;
 }
 export function slopeAt(x, z, seed) {
@@ -101,11 +145,11 @@ function biomeFrom(h, r, caveN) {
 // terrain at all, so no cave could ever spawn there.
 export function cavedHotspot(x, z, seed, h) {
   if (h <= 14) return false;
-  const mx = Math.sin(seed * 12.9898) * 90, mz = Math.cos(seed * 78.233) * 90;
-  // Flanks only (25–55 from the massif center): the peak itself stays
+  const mx = Math.sin(seed * 12.9898) * 180, mz = Math.cos(seed * 78.233) * 180;
+  // Flanks only (50–110 from the massif center): the peak itself stays
   // snowy, so a seed never loses the snowy biome to the hotspot.
   const md = Math.hypot(x - mx, z - mz);
-  return md >= 25 && md < 55;
+  return md >= 50 && md < 110;
 }
 export function biomeAt(x, z, seed) {
   const h = heightAt(x, z, seed);
@@ -216,7 +260,7 @@ function groundTexture() {
   }
   const tex = new THREE.CanvasTexture(cv);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(48, 48);
+  tex.repeat.set(96, 96); // same texel density as 48 over the old 380-size island
   tex.anisotropy = 4;
   return tex;
 }
@@ -354,7 +398,14 @@ function lantern(scene, x, z, seed) {
 }
 
 export function buildWorld(scene, seed) {
-  const SIZE = 380, SEG = 210;
+  // WAY larger island: 760 across (was 380) at the same vertex density,
+  // so the landmass radius roughly doubles — about 4× the land area.
+  const SIZE = 760, SEG = 400;
+  // Cave carves are computed FIRST (own RNG stream, so the main rand
+  // stream — and therefore tree/rock/chest placement — is untouched)
+  // and registered before any heightAt call, so the terrain mesh itself
+  // carries the carved tunnel notches.
+  caveCarvesBySeed.set(seed >>> 0, planCaveCarves(seed));
   const geo = new THREE.PlaneGeometry(SIZE, SIZE, SEG, SEG);
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
@@ -416,7 +467,11 @@ export function buildWorld(scene, seed) {
     const slope = 1 - normals.getY(i);
     if (slope > 0.28 && h > 1.3) col.lerp(tmp.set(0x7a756e), Math.min(0.85, (slope - 0.28) * 1.6)); // exposed rock on steeps
     if (slope > 0.45 && h > 1.3) col.lerp(tmp.set(0x7a756e), Math.min(0.5, (slope - 0.45) * 1.2)); // cliffs shed snow
-    const j = (hash2(Math.floor(x), Math.floor(z), seed) - 0.5) * 0.07;
+    // Smooth shading detail: the old per-integer-cell hash jitter changed
+    // abruptly between neighbouring vertices and read as a blocky grid.
+    // A low-frequency noise jitter varies smoothly instead, so terrain
+    // shades blend instead of stepping cell to cell.
+    const j = (fbm(x * 0.35, z * 0.35, seed + 51) - 0.5) * 0.06;
     colors[i * 3] = Math.min(1, Math.max(0, col.r + j));
     colors[i * 3 + 1] = Math.min(1, Math.max(0, col.g + j));
     colors[i * 3 + 2] = Math.min(1, Math.max(0, col.b + j));
@@ -428,10 +483,13 @@ export function buildWorld(scene, seed) {
   terrain.receiveShadow = true;
   scene.add(terrain);
 
-  // Sea (visual only in v1 — water mechanics are v2)
+  // Sea (visual only in v1 — water mechanics are v2). A single flat,
+  // slightly deeper-tinted plane: water reads as water, never as a
+  // colored grid — the grid look came from per-cell terrain jitter,
+  // fixed above with smooth shading noise.
   const sea = new THREE.Mesh(
     new THREE.PlaneGeometry(SIZE * 3, SIZE * 3),
-    new THREE.MeshStandardMaterial({ color: 0x2f7fc4, transparent: true, opacity: 0.78, roughness: 0.15, metalness: 0.1 })
+    new THREE.MeshStandardMaterial({ color: 0x2f7fc4, transparent: true, opacity: 0.85, roughness: 0.15, metalness: 0.1 })
   );
   sea.rotation.x = -Math.PI / 2; sea.position.y = SEA; scene.add(sea);
 
@@ -440,10 +498,11 @@ export function buildWorld(scene, seed) {
   const spawn = findSpawn(seed);
 
   // ---- Trees: groves + clearings, slope-aware, coastal palms ----
-  for (let i = 0; i < 340; i++) {
+  for (let i = 0; i < 1100; i++) {
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
+    if (inCaveCarve(x, z, seed, 1)) continue;
     const b = biomeAt(x, z, seed);
     const sl = slopeAt(x, z, seed);
     const grove = fbm(x * 0.01 + 500, z * 0.01, seed);
@@ -469,10 +528,11 @@ export function buildWorld(scene, seed) {
     trees.push({ group, x, z, h, hp: 3, kind: form, trunkH: trunkH * s, radius: 0.6 * s, scale: s });
   }
   // ---- Rocks: craggy, tinted, clustered on ridges + high ground ----
-  for (let i = 0; i < 120; i++) {
+  for (let i = 0; i < 350; i++) {
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
+    if (inCaveCarve(x, z, seed, 1)) continue;
     const sl = slopeAt(x, z, seed);
     if (sl < 0.7 && h < 14 && rand() < 0.45) continue; // rocks favor steeps + heights
     const iron = biomeAt(x, z, seed) === 'caved' ? rand() < 0.45 : rand() < 0.12;
@@ -489,10 +549,11 @@ export function buildWorld(scene, seed) {
   }
   // Ground stones (pickup fallback for chopping)
   const groundStones = [];
-  for (let i = 0; i < 26; i++) {
+  for (let i = 0; i < 40; i++) {
     const x = spawn.x + (rand() - 0.5) * 44, z = spawn.z + (rand() - 0.5) * 44;
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
+    if (inCaveCarve(x, z, seed, 1)) continue;
     const s = 0.20 + rand() * 0.16;
     const st = new THREE.Mesh(jitteredRockGeo(s, rand), pick(MATS.stone, rand));
     st.position.set(x, h + 0.15, z); st.castShadow = true; scene.add(st);
@@ -506,10 +567,11 @@ export function buildWorld(scene, seed) {
     [{ id: 'seed_carrot', n: 4 }, { id: 'money', n: 20 }],
     [{ id: 'iron', n: 2 }, { id: 'leather', n: 2 }, { id: 'seed_wheat', n: 3 }],
   ];
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 30; i++) {
     const x = (rand() - 0.5) * (SIZE - 40), z = (rand() - 0.5) * (SIZE - 40);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
+    if (inCaveCarve(x, z, seed, 1)) continue;
     const grp = new THREE.Group();
     const base = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.6, 0.7), MATS.chest);
     base.position.y = 0.3; base.castShadow = true; grp.add(base);
@@ -537,13 +599,14 @@ export function buildWorld(scene, seed) {
   const dummy = new THREE.Object3D();
   const bushGeo = new THREE.SphereGeometry(0.7, 7, 5);
   const bushMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
-  const bushes = new THREE.InstancedMesh(bushGeo, bushMat, 220);
+  const bushes = new THREE.InstancedMesh(bushGeo, bushMat, 380);
   const bushCol = new THREE.Color();
   let bi = 0;
-  for (let i = 0; i < 500 && bi < 220; i++) {
+  for (let i = 0; i < 900 && bi < 380; i++) {
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
+    if (inCaveCarve(x, z, seed, 1)) continue;
     const b = biomeAt(x, z, seed);
     if (b === 'desert' || b === 'snowy') continue;
     dummy.position.set(x, h + 0.2, z);
@@ -564,15 +627,16 @@ export function buildWorld(scene, seed) {
   // slightly flattened and tilted, so they read as lawn, not saplings.
   const grassGeo = new THREE.ConeGeometry(0.035, 0.30, 4);
   const grassMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
-  const grass = new THREE.InstancedMesh(grassGeo, grassMat, 1020);
+  const grass = new THREE.InstancedMesh(grassGeo, grassMat, 1500);
   let gi = 0;
   const grassCol = new THREE.Color();
-  for (let i = 0; i < 2300 && gi < 1020; i++) {
+  for (let i = 0; i < 3400 && gi < 1500; i++) {
     let x, z;
     if (i < 130) { x = spawn.x + (rand() - 0.5) * 36; z = spawn.z + (rand() - 0.5) * 36; }
     else { x = (rand() - 0.5) * (SIZE - 20); z = (rand() - 0.5) * (SIZE - 20); }
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
+    if (inCaveCarve(x, z, seed, 1)) continue;
     const b = biomeAt(x, z, seed);
     if (b === 'snowy' || b === 'caved') continue;
     dummy.position.set(x, h + 0.12, z);
@@ -592,13 +656,14 @@ export function buildWorld(scene, seed) {
   scene.add(grass);
   const flowerGeo = new THREE.SphereGeometry(0.07, 6, 5);
   const flowerMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 });
-  const flowers = new THREE.InstancedMesh(flowerGeo, flowerMat, 90);
+  const flowers = new THREE.InstancedMesh(flowerGeo, flowerMat, 140);
   const flowerCols = [0xe86a92, 0xf5c542, 0xffffff, 0xc07ae0];
   let fi = 0;
-  for (let i = 0; i < 300 && fi < 90; i++) {
+  for (let i = 0; i < 450 && fi < 140; i++) {
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
+    if (inCaveCarve(x, z, seed, 1)) continue;
     if (biomeAt(x, z, seed) !== 'plains') continue;
     dummy.position.set(x, h + 0.32, z);
     dummy.rotation.set(0, 0, 0); dummy.scale.setScalar(0.8 + rand() * 0.6);
@@ -616,10 +681,10 @@ export function buildWorld(scene, seed) {
   // Close-up richness: the ground is never a bare flat color up close.
   const pebGeo = new THREE.DodecahedronGeometry(1, 0);
   const pebMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
-  const pebbles = new THREE.InstancedMesh(pebGeo, pebMat, 620);
+  const pebbles = new THREE.InstancedMesh(pebGeo, pebMat, 900);
   const pebCol = new THREE.Color();
   let pi = 0;
-  for (let i = 0; i < 1400 && pi < 620; i++) {
+  for (let i = 0; i < 2000 && pi < 900; i++) {
     // First samples cluster near spawn so the ground reads detailed
     // the moment you step out, not just far away
     let x, z;
@@ -627,6 +692,7 @@ export function buildWorld(scene, seed) {
     else { x = (rand() - 0.5) * (SIZE - 20); z = (rand() - 0.5) * (SIZE - 20); }
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
+    if (inCaveCarve(x, z, seed, 1)) continue;
     const b = biomeAt(x, z, seed);
     dummy.position.set(x, h + 0.05, z);
     dummy.rotation.set(rand() * 0.8, rand() * Math.PI * 2, rand() * 0.8);
@@ -647,10 +713,11 @@ export function buildWorld(scene, seed) {
   scene.add(pebbles);
   // Dirt patch discs hugging the ground (plains / forest / desert)
   const dirtMat = new THREE.MeshStandardMaterial({ color: 0x6b4e2e, roughness: 1 });
-  for (let i = 0; i < 130; i++) {
+  for (let i = 0; i < 200; i++) {
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
+    if (inCaveCarve(x, z, seed, 1)) continue;
     const b = biomeAt(x, z, seed);
     if (b === 'snowy' || b === 'caved') continue;
     if (slopeAt(x, z, seed) > 0.35) continue; // flat ground only, so discs don't clip into slopes
@@ -665,118 +732,129 @@ export function buildWorld(scene, seed) {
     scene.add(disc);
   }
 
-  // ---- Caves: REAL walk-in cave mouths in caved mountains ----
-  // A cave is a rock mound with a dark arched entrance, side walls, a
-  // roof, and an interior chamber you can actually walk into (no
-  // collision system blocks you — the walls are the cave). Iron ore
-  // sits inside, so caves are worth entering. Entrances face downhill
-  // so you can see the opening as you approach.
-  const caves = [];
-  // DoubleSide: the player walks INSIDE these, and single-sided boxes
-  // would vanish from the inside (backface-culled).
-  const caveDark = new THREE.MeshStandardMaterial({ color: 0x1a1712, roughness: 1, side: THREE.DoubleSide });
-  const caveRock = new THREE.MeshStandardMaterial({ color: 0x6e6a60, roughness: 1, side: THREE.DoubleSide });
-  function buildCave(cx, cz, ch, facing, slope) {
-    const g = new THREE.Group();
-    // Tilt the whole chamber to follow the hillside: the terrain is NOT
-    // carved, so a flat chamber on a slope would let the hillside surface
-    // poke straight through the floor. With the tilt, the floor plane
-    // tracks the terrain (front at the ground, back buried in the hill)
-    // and the roof keeps headroom along the whole tunnel.
-    const floor = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.12, 5.6), caveDark);
-    floor.position.set(0, 0.14, 0); floor.receiveShadow = true; g.add(floor);
-    for (const sx of [-1.85, 1.85]) {
-      const wall = new THREE.Mesh(new THREE.BoxGeometry(0.55, 3.0, 5.6), caveRock);
-      wall.position.set(sx, 1.5, 0); wall.castShadow = true; g.add(wall);
-    }
-    const roof = new THREE.Mesh(new THREE.BoxGeometry(4.3, 0.55, 5.8), caveRock);
-    roof.position.set(0, 3.15, 0); roof.castShadow = true; g.add(roof);
-    const back = new THREE.Mesh(new THREE.BoxGeometry(4.3, 3.1, 0.5), new THREE.MeshStandardMaterial({ color: 0x0a0908, roughness: 1, side: THREE.DoubleSide }));
-    back.position.set(0, 1.55, -2.65); g.add(back);
-    // Entrance arch: jambs + lintel, opening ~1.7 wide, ~2.3 tall
-    for (const sx of [-1.0, 1.0]) {
-      const jamb = new THREE.Mesh(new THREE.BoxGeometry(0.45, 2.5, 0.6), caveRock);
-      jamb.position.set(sx, 1.25, 2.75); jamb.castShadow = true; g.add(jamb);
-    }
-    const lintel = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.55, 0.6), caveRock);
-    lintel.position.set(0, 2.75, 2.75); lintel.castShadow = true; g.add(lintel);
-    // Rock mound piled over and around the chamber (not blocking the
-    // front). Ring radius + heights keep every rock clear of the chamber
-    // interior: rocks used to overlap the roof slab and spike through
-    // the ceiling inside.
-    for (let i = 0; i < 7; i++) {
-      const a = (i / 7) * Math.PI * 2;
-      const mx = Math.cos(a) * 3.8, mz = Math.sin(a) * 3.8;
-      if (mz > 1.8) continue; // keep the entrance front clear
-      const s = 0.8 + rand() * 0.5;
-      const rock = new THREE.Mesh(jitteredRockGeo(s, rand), pick(MATS.stone, rand));
-      rock.position.set(mx, 4.5 + rand() * 0.5, mz);
-      rock.rotation.set(rand(), rand() * 3, rand());
-      rock.castShadow = true; g.add(rock);
-    }
-    const topRock = new THREE.Mesh(jitteredRockGeo(1.4, rand), pick(MATS.stone, rand));
-    topRock.position.set(0, 4.9, -0.5); topRock.castShadow = true; g.add(topRock);
-    // Dim warm light so the interior actually reads instead of pitch black
-    const lamp = new THREE.PointLight(0xffb37a, 30, 16, 1.8);
-    lamp.position.set(0, 2.2, 0); g.add(lamp);
-    // Iron ore inside the chamber — the reason to go in
-    for (let i = 0; i < 2; i++) {
-      const ore = new THREE.Mesh(jitteredRockGeo(0.45 + rand() * 0.2, rand), MATS.iron);
-      ore.position.set((rand() - 0.5) * 2.0, 0.35, -1.5 - rand() * 0.8);
-      ore.castShadow = true; g.add(ore);
-    }
-    // Sit the cave on the ground at its CENTER and tilt it with the
-    // hillside (see above): the mouth lands at the ground in front and
-    // the back digs into the hill, instead of the arch floating or the
-    // terrain slicing through the floor.
-    g.position.set(cx, ch - 0.05, cz);
-    g.rotation.order = 'YXZ';
-    g.rotation.y = facing;
-    g.rotation.x = Math.atan(slope);
-    scene.add(g);
-    caves.push({ x: cx, z: cz, h: ch, group: g, facing, floorY: ch + 0.15, slope });
-    lantern(scene, cx + Math.cos(facing) * 3, cz - Math.sin(facing) * 3, seed);
-  }
-  {
-    const tryCave = (x, z) => {
-      const h = heightAt(x, z, seed);
-      if (h < 12) return false;
-      if (biomeAt(x, z, seed) !== 'caved') return false;
-      if (Math.hypot(x - spawn.x, z - spawn.z) < 40) return false;
-      if (caves.some((c) => Math.hypot(c.x - x, c.z - z) < 55)) return false;
-      const gx = heightAt(x + 2, z, seed) - heightAt(x - 2, z, seed);
-      const gz = heightAt(x, z + 2, seed) - heightAt(x, z - 2, seed);
+  // ---- Caves: entrances CARVED into the hillside (Minecraft-like) ----
+  // The terrain itself is notched by planCaveCarves + carveDelta (see
+  // heightAt): a tunnel-shaped depression cut into a caved-mountain
+  // slope, deepest inside the hill and fading to nothing at the mouth.
+  // What you see is NOT a freestanding box: the slope opens into a
+  // notch, irregular rocks rim the mouth and line the tunnel, flat rock
+  // slabs bridge overhead, and the tunnel floor IS the carved ground —
+  // so walking in follows the terrain instead of a box floor.
+  // Cave sites are planned on their own RNG stream (deterministic per
+  // seed) so tree/rock/chest placement never shifts.
+  function planCaveCarves(seed) {
+    const crand = mulberry((seed ^ 0x9E3779B9) >>> 0);
+    const spawn = findSpawn(seed);
+    const carves = [];
+    const trySite = (x, z) => {
+      if (carves.length >= 4) return false;
+      const mh = baseHeightAt(x, z, seed);
+      if (mh < 12) return false;
+      const r = regionAt(x, z, seed);
+      const caveN = fbm(x * 0.006 + 300, z * 0.006, seed);
+      const b = cavedHotspot(x, z, seed, mh) ? 'caved' : biomeFrom(mh, r, caveN);
+      if (b !== 'caved') return false;
+      if (Math.hypot(x - spawn.x, z - spawn.z) < 60) return false;
+      if (carves.some((c) => Math.hypot(c.mx - x, c.mz - z) < 110)) return false;
+      // Uphill direction = into the hill; the mouth faces downhill.
+      const gx = baseHeightAt(x + 2, z, seed) - baseHeightAt(x - 2, z, seed);
+      const gz = baseHeightAt(x, z + 2, seed) - baseHeightAt(x, z - 2, seed);
       const gl = Math.hypot(gx, gz) || 1;
-      const facing = Math.atan2(-gx / gl, -gz / gl); // face downhill
-      // Gentle slope along the cave axis only: the chamber floor is flat,
-      // so a steep hillside would bury the player through the roof.
-      const fdx = Math.sin(facing), fdz = Math.cos(facing);
-      const frontH = heightAt(x + fdx * 2.75, z + fdz * 2.75, seed);
-      const backH = heightAt(x - fdx * 2.8, z - fdz * 2.8, seed);
-      const slopeAlong = (backH - frontH) / 5.55;
-      if (slopeAlong < 0 || slopeAlong > 0.55) return false;
-      buildCave(x, z, h, facing, slopeAlong);
+      const dx = gx / gl, dz = gz / gl;
+      const frontH = baseHeightAt(x - dx * 3, z - dz * 3, seed);
+      const backH = baseHeightAt(x + dx * 8, z + dz * 8, seed);
+      const slopeAlong = (backH - frontH) / 11;
+      if (slopeAlong < 0.22 || slopeAlong > 0.95) return false;
+      carves.push({ mx: x, mz: z, dx, dz, len: 8, halfW: 2.0, mouthH: mh });
       return true;
     };
-    for (let i = 0; i < 400 && caves.length < 3; i++) {
-      const x = (rand() - 0.5) * (SIZE - 40), z = (rand() - 0.5) * (SIZE - 40);
-      tryCave(x, z);
+    for (let i = 0; i < 500 && carves.length < 4; i++) {
+      trySite((crand() - 0.5) * 700, (crand() - 0.5) * 700);
     }
-    // Fallback: grid-scan for the most cave-like high points so a world
-    // never ends up with zero caves.
-    if (caves.length < 3) {
+    if (carves.length < 4) {
       const scored = [];
-      for (let x = -160; x <= 160; x += 16) for (let z = -160; z <= 160; z += 16) {
-        const h = heightAt(x, z, seed);
+      for (let x = -340; x <= 340; x += 20) for (let z = -340; z <= 340; z += 20) {
+        const h = baseHeightAt(x, z, seed);
         const caveN = fbm(x * 0.006 + 300, z * 0.006, seed);
         if (h > 12 && caveN > 0.50) scored.push({ x, z, s: caveN + h / 100 });
       }
       scored.sort((a, b) => b.s - a.s);
       for (const c of scored) {
-        if (caves.length >= 3) break;
-        tryCave(c.x, c.z);
+        if (carves.length >= 4) break;
+        trySite(c.x, c.z);
       }
     }
+    return carves;
+  }
+  const caves = [];
+  const caveDark = new THREE.MeshStandardMaterial({ color: 0x1a1712, roughness: 1, side: THREE.DoubleSide });
+  const caveRock = new THREE.MeshStandardMaterial({ color: 0x6e6a60, roughness: 1, side: THREE.DoubleSide });
+  {
+    const carves = caveCarvesBySeed.get(seed >>> 0) || [];
+    carves.forEach((c, ci) => {
+      const crand = mulberry((seed ^ ((ci + 1) * 2654435761)) >>> 0);
+      // Group origin at the mouth, local +z pointing INTO the hill.
+      const g = new THREE.Group();
+      g.position.set(c.mx, c.mouthH, c.mz);
+      g.rotation.y = Math.atan2(c.dx, c.dz);
+      // Dark tunnel floor, tilted to follow the carved descent.
+      const floor = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.12, c.len + 1.5), caveDark);
+      floor.position.set(0, -0.12 * (c.len / 2) + 0.06, c.len / 2);
+      floor.rotation.x = Math.atan(0.12);
+      floor.receiveShadow = true; g.add(floor);
+      // Irregular rock walls lining the tunnel (tilted slabs, not boxes).
+      for (let u = 1; u <= c.len; u += 1.6) {
+        for (const sx of [-1.9, 1.9]) {
+          const wall = new THREE.Mesh(jitteredRockGeo(0.9 + crand() * 0.4, crand), pick(MATS.stone, crand));
+          wall.scale.set(0.55, 1.5, 1.3);
+          wall.position.set(sx, -0.12 * u + 1.0, u);
+          wall.rotation.set((crand() - 0.5) * 0.5, crand() * 3, (crand() - 0.5) * 0.5);
+          wall.castShadow = true; g.add(wall);
+        }
+      }
+      // Flat rock slabs bridging overhead — ends buried in the carve
+      // walls, so they read as natural overhang, not a roof slab.
+      for (const u of [2.5, 4.5, 6.5]) {
+        const slab = new THREE.Mesh(jitteredRockGeo(1.4, crand), pick(MATS.stone, crand));
+        slab.scale.set(2.4, 0.35, 1.3);
+        slab.position.set(0, -0.12 * u + 2.7, u);
+        slab.rotation.set((crand() - 0.5) * 0.2, crand() * 0.4, (crand() - 0.5) * 0.2);
+        slab.castShadow = true; g.add(slab);
+      }
+      // Back of the tunnel: dark wall + rock cluster.
+      const back = new THREE.Mesh(new THREE.BoxGeometry(3.8, 2.8, 0.4), new THREE.MeshStandardMaterial({ color: 0x0a0908, roughness: 1, side: THREE.DoubleSide }));
+      back.position.set(0, -0.12 * c.len + 1.4, c.len + 0.2); g.add(back);
+      for (let i = 0; i < 3; i++) {
+        const rock = new THREE.Mesh(jitteredRockGeo(0.7 + crand() * 0.4, crand), pick(MATS.stone, crand));
+        rock.position.set((crand() - 0.5) * 2.4, -0.12 * c.len + 0.4, c.len + 0.4);
+        rock.castShadow = true; g.add(rock);
+      }
+      // Mouth rim: a ragged arch of rocks following the carved surface.
+      for (let v = -2.4; v <= 2.41; v += 0.8) {
+        const wx = c.mx - c.dz * v - c.dx * 0.3, wz = c.mz + c.dx * v - c.dz * 0.3;
+        const rim = new THREE.Mesh(jitteredRockGeo(0.55 + crand() * 0.35, crand), pick(MATS.stone, crand));
+        // Local coords: local x = -v, local z = u = -0.3; y from the
+        // carved surface so the rim hugs the slope, not floats over it.
+        rim.position.set(-v, heightAt(wx, wz, seed) - c.mouthH + 0.25, -0.3);
+        rim.rotation.set(crand() * 0.6, crand() * 3, crand() * 0.6);
+        rim.castShadow = true; g.add(rim);
+      }
+      // Dim warm light + iron ore inside, the reason to go in.
+      const lamp = new THREE.PointLight(0xffb37a, 30, 16, 1.8);
+      lamp.position.set(0, -0.12 * 4 + 2.0, 4); g.add(lamp);
+      for (let i = 0; i < 3; i++) {
+        const ore = new THREE.Mesh(jitteredRockGeo(0.4 + crand() * 0.2, crand), MATS.iron);
+        const u = 3.5 + crand() * 3;
+        ore.position.set((crand() - 0.5) * 1.6, -0.12 * u + 0.3, u);
+        ore.castShadow = true; g.add(ore);
+      }
+      scene.add(g);
+      // Facing = mouth-outward (downhill), matching game.js groundY
+      // local axes: local +z points out of the mouth, -z into the hill.
+      const facing = Math.atan2(-c.dx, -c.dz);
+      caves.push({ x: c.mx, z: c.mz, h: c.mouthH, group: g, facing, floorY: c.mouthH, slope: -0.12, len: c.len });
+      lantern(scene, c.mx - c.dx * 3, c.mz - c.dz * 3, seed);
+    });
   }
 
   // Gold infinite bench (unbreakable, unmovable) near spawn
