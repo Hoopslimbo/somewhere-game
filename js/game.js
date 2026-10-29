@@ -21,6 +21,7 @@ let swingStart = 0; // timestamp of the last tool swing (item-use animation)
 let swingDur = 350; // debug-overridable only; gameplay default is 350ms
 let pauseOpen = false;
 let lastForwardDown = 0, doubleTapSprint = false, forwardHeld = false;
+let curEyeH = 1.65; // smoothed eye height: stand 1.65, crouch 1.05
 // How each menu was opened: { by: 'key'|'mouse', key: code|null }.
 // A menu closes on its open key ONLY if it was opened by the keyboard
 // with that same key — mouse-opened menus ignore the key.
@@ -69,20 +70,33 @@ function countOf(id) {
   for (const s of [...P.inv, ...P.hotbar]) if (s && s.id === id) n += s.n;
   return n;
 }
+const MAX_STACK = 70; // max items per slot for anything stackable
 function addItem(id, n = 1) {
   if (id === 'money') { P.money += n; updateHUD(); return true; }
   const def = ITEMS[id];
-  if (def && def.tool) { // tools don't stack
+  if (def && def.tool && !def.temp) { // tools don't stack — except temp stones, which do
     for (let i = 0; i < n; i++) {
       const slot = { id, n: 1, dur: def.maxDur };
       if (!pushToInv(slot)) return false;
     }
     updateHUD(); return true;
   }
+  // Stackable: top existing slots up to 70, then new slots in chunks of 70.
+  // All-or-nothing: if total room < n, add nothing and return false.
+  let room = 0;
+  for (const s of [...P.inv, ...P.hotbar]) if (s && s.id === id) room += MAX_STACK - s.n;
+  room += ((7 - P.hotbar.filter(Boolean).length) + (invCap() - P.inv.filter(Boolean).length)) * MAX_STACK;
+  if (room < n) return false;
+  let left = n;
   for (const s of [...P.inv, ...P.hotbar]) {
-    if (s && s.id === id) { s.n += n; updateHUD(); return true; }
+    if (left <= 0) break;
+    if (s && s.id === id && s.n < MAX_STACK) { const add = Math.min(left, MAX_STACK - s.n); s.n += add; left -= add; }
   }
-  if (!pushToInv({ id, n })) return false;
+  while (left > 0) {
+    const chunk = Math.min(left, MAX_STACK);
+    if (!pushToInv({ id, n: chunk })) return false; // unreachable after the room check
+    left -= chunk;
+  }
   updateHUD(); return true;
 }
 function pushToInv(slot) {
@@ -279,7 +293,7 @@ function bindInput() {
       openPause();
       return;
     }
-    if (e.code === kb.chat || e.code === 'KeyC') { openChat(); return; }
+    if (e.code === kb.chat) { openChat(); return; }
     if (e.code === kb.inventory) {
       if (!$('inv-panel').classList.contains('hidden')) {
         // Same-key close ONLY if the keyboard opened it with this key.
@@ -424,10 +438,10 @@ function requestGameLock() {
 
 function renderHelp() {
   $('help-panel').innerHTML = `<h3>How to play</h3>
-  <p><b>WASD</b> move · <b>Double-tap W</b> sprint (hold W) · <b>Mouse</b> look · <b>Space</b> jump<br>
+  <p><b>WASD</b> move · <b>Double-tap W</b> sprint (hold W) · <b>Shift</b> sprint · <b>Hold Alt</b> crouch · <b>Mouse</b> look · <b>Space</b> jump<br>
   <b>Right-click</b> (or <b>E</b>) interact · <b>Hold left-click</b> to chop / mine / dig · <b>Left- or right-click</b> place in build mode · <b>B</b> or switch to a non-building item exits build mode<br>
   <b>1–7</b> hotbar · <b>8, 9, 0</b> permanent slots (car key, house key) · <b>Scroll</b> switch slot<br>
-  <b>I</b> backpack · <b>B</b> build mode · <b>Q</b> quick craft · <b>C</b> or <b>T</b> chat · <b>F</b> eat selected food · <b>Esc</b> menu · <b>H</b> this help</p>
+  <b>I</b> backpack · <b>B</b> build mode · <b>Q</b> quick craft · <b>T</b> chat · <b>F</b> eat selected food · <b>Esc</b> menu · <b>H</b> this help</p>
   <p>Start: chop trees with your wooden axe. Use the gold bench near spawn to craft walls, tools and machines. Place a vehicle machine, craft a car, and your car key appears in a permanent slot. Watch hunger — eat apples to stay full and regen health.</p>`;
 }
 
@@ -564,8 +578,19 @@ function groundY(x, z, yHint) {
 // ---------- Player ----------
 function updatePlayer(dt) {
   const kb = S.keybinds;
-  // Sprint: Shift, or a double-tap of forward held down (see bindInput).
-  const speed = (keys['ShiftLeft'] || keys['ShiftRight'] || (doubleTapSprint && keys[kb.forward])) ? 9 : 6;
+  // Crouch: hold Alt — lower eye, slower walk, beats sprint. Sprint:
+  // Shift, or a double-tap of forward held down (see bindInput).
+  const crouching = keys['AltLeft'] || keys['AltRight'];
+  const sprinting = !crouching && (keys['ShiftLeft'] || keys['ShiftRight'] || (doubleTapSprint && keys[kb.forward]));
+  const speed = crouching ? 4 : sprinting ? 10.5 : 6;
+  // Smooth eye height + sprint FOV zoom-out (base 62, sprint 70) so both
+  // transitions glide instead of snapping.
+  curEyeH += ((crouching ? 1.05 : 1.65) - curEyeH) * Math.min(1, dt * 10);
+  const fovTarget = sprinting ? 70 : 62;
+  if (Math.abs(camera.fov - fovTarget) > 0.05) {
+    camera.fov += (fovTarget - camera.fov) * Math.min(1, dt * 8);
+    camera.updateProjectionMatrix();
+  }
   let fx = 0, fz = 0;
   if (keys[kb.forward]) fz -= 1;
   if (keys[kb.back]) fz += 1;
@@ -611,7 +636,7 @@ function updatePlayer(dt) {
   player.position.copy(P.pos);
   player.rotation.y = P.yaw + Math.PI;
   // Camera: FIRST PERSON — head height, mouse look, no third-person orbit
-  camera.position.set(P.pos.x, P.pos.y + 1.65, P.pos.z);
+  camera.position.set(P.pos.x, P.pos.y + curEyeH, P.pos.z);
   camera.rotation.order = 'YXZ';
   camera.rotation.set(P.pitch, P.yaw, 0);
   updateViewmodel();
@@ -731,13 +756,7 @@ function updateDrops(dt) {
     drops[i].ttl -= dt;
     drops[i].mesh.rotation.y += dt;
     if (drops[i].ttl <= 0) { scene.remove(drops[i].mesh); drops.splice(i, 1); continue; }
-    const d = Math.hypot(P.pos.x - drops[i].x, P.pos.z - drops[i].z);
-    if (d < 1.2 && Math.abs(P.pos.y - drops[i].mesh.position.y) < 2) {
-      if (addItem(drops[i].id, drops[i].n)) {
-        chatMsg('System', `Picked up ${drops[i].n}× ${ITEMS[drops[i].id].name}.`, true);
-        scene.remove(drops[i].mesh); drops.splice(i, 1);
-      }
-    }
+    // No walk-over pickup anymore — right-click is the only way to pick a drop up.
   }
 }
 
@@ -880,7 +899,7 @@ function findTarget() {
   // object's radius, and the object must be within reach.
   const maxD = 5;
   const fx = -Math.sin(P.yaw) * Math.cos(P.pitch), fy = Math.sin(P.pitch), fz = -Math.cos(P.yaw) * Math.cos(P.pitch);
-  const eye = new THREE.Vector3(P.pos.x, P.pos.y + 1.65, P.pos.z);
+  const eye = new THREE.Vector3(P.pos.x, P.pos.y + curEyeH, P.pos.z);
   const dir = new THREE.Vector3(fx, fy, fz);
   let best = null, bestT = maxD;
   const consider = (cx, cy, cz, radius, data) => {
@@ -905,6 +924,7 @@ function findTarget() {
   for (const p of placed) consider(p.x, p.y + 1, p.z, 1.6, { kind: 'placed', ref: p });
   for (const car of cars) if (!car.broken) consider(car.group.position.x, car.group.position.y + 0.8, car.group.position.z, 2.1, { kind: 'car', ref: car });
   for (const pl of crops) consider(pl.x, groundY(pl.x, pl.z) + 0.3, pl.z, 0.65, { kind: 'crop', ref: pl });
+  for (const d of drops) consider(d.x, d.mesh.position.y + 0.2, d.z, 0.8, { kind: 'drop', ref: d });
   // Ground digging (shovel only): when no object target is closer and
   // the shovel is held, the terrain ground itself becomes the target.
   // Digging never alters the terrain mesh — it only grants a bag.
@@ -944,7 +964,7 @@ function isDiggableCell(x, z) {
 function groundDigCell() {
   // March the look ray to the ground (max 5, same reach as objects).
   const fx = -Math.sin(P.yaw) * Math.cos(P.pitch), fy = Math.sin(P.pitch), fz = -Math.cos(P.yaw) * Math.cos(P.pitch);
-  const ex = P.pos.x, ey = P.pos.y + 1.65, ez = P.pos.z;
+  const ex = P.pos.x, ey = P.pos.y + curEyeH, ez = P.pos.z;
   for (let d = 0.5; d <= 5; d += 0.25) {
     const x = ex + fx * d, y = ey + fy * d, z = ez + fz * d;
     if (y <= groundY(x, z) + 0.15) {
@@ -957,7 +977,7 @@ function groundDigCell() {
 function digGround(cell, toolSlot) {
   if (!isDiggableCell(cell.x, cell.z)) return; // never pay out on excluded ground
   const id = digYield(cell.x, cell.z);
-  if (!addItem(id, 1)) return; // inventory full — don't wear the tool for nothing
+  dropItem(id, 1, cell.x, cell.z); // drops never fail on a full inventory — the bag just sits there
   damageTool(toolSlot);
   updateHUD();
 }
@@ -968,6 +988,7 @@ function targetLabel(t) {
     case 'tree': return 'Tree — Hold left click to chop';
     case 'rock': return t.ref.iron ? 'Iron ore — Hold left click to mine (needs pickaxe)' : 'Stone — Hold left click to mine (needs pickaxe)';
     case 'groundstone': return 'Stone — Right click to pick up';
+    case 'drop': return `${ITEMS[t.ref.id]?.name || 'Item'} — Right click to pick up`;
     case 'chest': return (t.ref.contents && t.ref.contents.length === 0) ? 'Empty loot chest — Right click to open' : 'Loot chest — Right click to open';
     case 'goldbench': return 'Gold bench — Right click to craft (unbreakable)';
     case 'shop': return 'Shop — Right click to buy & sell';
@@ -989,6 +1010,7 @@ function targetBasePos(t) {
     case 'tree': return { x: t.ref.x, z: t.ref.z, r: Math.max(0.9, (t.ref.radius || 0.6) + 0.5) };
     case 'rock': return { x: t.ref.x, z: t.ref.z, r: (t.ref.radius || 0.7) + 0.5 };
     case 'groundstone': return { x: t.ref.x, z: t.ref.z, r: 0.55 };
+    case 'drop': return { x: t.ref.x, z: t.ref.z, r: 0.6 };
     case 'chest': return { x: t.ref.x, z: t.ref.z, r: 1.1 };
     case 'car': return { x: t.ref.group.position.x, z: t.ref.group.position.z, r: 2.4 };
     case 'ground': return { x: t.x, z: t.z, r: 0.7 };
@@ -1124,6 +1146,18 @@ function doInteract(source) {
     world.groundStones = world.groundStones.filter((s) => s !== target.ref);
     addItem('ground_stone');
     toast('Picked up a stone. It can chop a tree in a pinch — slower, and it breaks after that tree is fully chopped.');
+  } else if (target.kind === 'drop') {
+    // Pickup is right-click ONLY — E on a drop does nothing.
+    if (source !== 'mouse') return;
+    const d = target.ref;
+    if (addItem(d.id, d.n)) {
+      scene.remove(d.mesh);
+      drops.splice(drops.indexOf(d), 1);
+      chatMsg('System', `Picked up ${d.n}× ${ITEMS[d.id].name}.`, true);
+      updateHUD();
+    } else {
+      toast('Inventory full — make room first.');
+    }
   } else if (target.kind === 'placed') {
     const p = target.ref;
     if (p.itemId === 'vehicle_machine') openVehiclePanel(p, source);
@@ -1144,8 +1178,8 @@ function chopTree(t, toolSlot) {
     scene.remove(t.group);
     world.trees = world.trees.filter((x) => x !== t);
     const wood = 2 + Math.floor(Math.random() * 3);
-    addItem('wood', wood);
-    if (Math.random() < 0.3) { addItem('apple', 1); }
+    dropItem('wood', wood, t.x, t.z);
+    if (Math.random() < 0.3) { dropItem('apple', 1, t.x + 0.7, t.z + 0.4); }
     // The ground stone survives the whole tree (multiple hits) and
     // breaks ONLY now, when the tree is fully chopped — never after a
     // single swing.
@@ -1153,8 +1187,12 @@ function chopTree(t, toolSlot) {
       const arr = selSlot < 7 ? P.hotbar : P.perm;
       const idx = selSlot < 7 ? selSlot : selSlot - 7;
       if (arr[idx] && arr[idx].id === 'ground_stone') {
-        arr[idx] = null;
-        if (selSlot < 7) P.hotbar = P.hotbar.filter(Boolean);
+        // Stacked stones lose one stone, not the whole stack.
+        if (arr[idx].n > 1) arr[idx].n -= 1;
+        else {
+          arr[idx] = null;
+          if (selSlot < 7) P.hotbar = P.hotbar.filter(Boolean);
+        }
       }
       toast('Your stone broke apart.');
     }
@@ -1171,8 +1209,8 @@ function mineRock(r, toolSlot) {
   if (r.hp <= 0) {
     scene.remove(r.mesh);
     world.rocks = world.rocks.filter((x) => x !== r);
-    if (r.iron) { addItem('iron', 2); }
-    else { addItem('stone', 3); }
+    if (r.iron) { dropItem('iron', 2, r.x, r.z); }
+    else { dropItem('stone', 3, r.x, r.z); }
   }
   updateHUD();
 }
@@ -1182,7 +1220,11 @@ function smashPlaced(p) {
   // Debris gives back a few materials, never more than the piece was made of
   const back = { wall_wood: ['wood', 1], wall_brick: ['stone', 1], wall_steel: ['iron', 1], wall_window: ['wood', 1], wall_door: ['wood', 1], wall_ice: ['ice', 1], floor: ['wood', 1], roof: ['wood', 1] };
   const b = back[p.itemId];
-  if (b) { addItem(b[0], b[1]); chatMsg('System', `Smashed! Recovered ${b[1]}× ${ITEMS[b[0]].name}.`, true); }
+  if (b) { dropItem(b[0], b[1], p.x, p.z); chatMsg('System', `Smashed! Recovered ${b[1]}× ${ITEMS[b[0]].name} — right-click it to pick it up.`, true); }
+  // A smashed storage chest drops its contents too — nothing vanishes silently.
+  if (p.itemId === 'chest' && p.contents) {
+    p.contents.forEach((s, i) => { if (s) dropItem(s.id, s.n, p.x + (i % 3 - 1) * 0.7, p.z + (Math.floor(i / 3) - 1) * 0.7); });
+  }
   updateHUD(); saveGame();
 }
 
@@ -1633,7 +1675,7 @@ function ghostAim() {
   // Build placement follows the first-person crosshair ray: march along
   // the look ray until it hits the ground (max 7 units), and place there.
   const fx = -Math.sin(P.yaw) * Math.cos(P.pitch), fy = Math.sin(P.pitch), fz = -Math.cos(P.yaw) * Math.cos(P.pitch);
-  const ex = P.pos.x, ey = P.pos.y + 1.65, ez = P.pos.z;
+  const ex = P.pos.x, ey = P.pos.y + curEyeH, ez = P.pos.z;
   for (let d = 0.5; d <= 7; d += 0.5) {
     const x = ex + fx * d, y = ey + fy * d, z = ez + fz * d;
     if (y <= groundY(x, z) + 0.15) {
@@ -1723,9 +1765,10 @@ function plantOrHarvest(plot) {
 function harvestCrop(plot) {
   if (plot.stage < 3) { toast('Not ready yet.'); return; }
   const cropId = plot.seed === 'seed_wheat' ? 'wheat' : 'carrot';
-  addItem(cropId, 2);
-  addItem(plot.seed, 1 + Math.floor(Math.random() * 2));
-  chatMsg('System', `Harvested ${ITEMS[cropId].name}! Seeds returned.`, true);
+  const seeds = 1 + Math.floor(Math.random() * 2);
+  dropItem(cropId, 2, plot.x, plot.z);
+  dropItem(plot.seed, seeds, plot.x + 0.7, plot.z + 0.4);
+  chatMsg('System', `Harvested ${ITEMS[cropId].name}! Right-click the drops to pick them up.`, true);
   plot.seed = null; plot.stage = 0; plot.planted = 0;
   if (plot.sprout) { scene.remove(plot.sprout); plot.sprout = null; }
   updateHUD();
