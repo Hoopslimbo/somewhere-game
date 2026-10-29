@@ -108,8 +108,17 @@ function addItem(id, n = 1) {
   updateHUD(); return true;
 }
 function pushToInv(slot) {
-  if (P.hotbar.length < 7) { P.hotbar.push(slot); return true; }
-  if (P.inv.length < invCap()) { P.inv.push(slot); return true; }
+  // Slot arrays can hold holes: the inventory grid renders every slot
+  // up to the cap, and dragging onto a rendered empty slot past the
+  // array's end extends it with undefined entries. Raw .length then
+  // lies about fullness — it reported "Inventory full" with visibly
+  // empty slots, and atomic crafting refunded everything, so nothing
+  // could be crafted. Fill the first empty slot in range instead;
+  // only a fully-occupied range is really full. Filling holes (never
+  // appending past them) also keeps new items inside the 7 visible
+  // hotbar slots instead of landing on unreachable indices.
+  for (let i = 0; i < 7; i++) if (!P.hotbar[i]) { P.hotbar[i] = slot; return true; }
+  for (let i = 0; i < invCap(); i++) if (!P.inv[i]) { P.inv[i] = slot; return true; }
   toast('Inventory full!'); return false;
 }
 function removeCount(id, n) {
