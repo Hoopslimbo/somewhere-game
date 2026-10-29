@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { buildCharacter } from './character.js';
-import { buildWorld, heightAt, biomeAt, makeSkyDome } from './world.js';
+import { buildWorld, heightAt, biomeAt, makeSkyDome, hideTreeInstances, refreshTreeInstances } from './world.js';
 import { ITEMS, RECIPES, QUICK_RECIPES, cleanText, load, save } from './data.js';
 import { itemIcon } from './icons.js';
 
@@ -61,6 +61,14 @@ function chatMsg(sender, text, sys = false) {
 function renderChat() {
   $('chat-log').innerHTML = chatLog.slice(-6).map((m) =>
     `<div class="chat-msg ${m.sys ? 'sys' : ''}"><b>${m.sender}:</b> ${m.text}</div>`).join('');
+}
+// Chat reset: leaving a world and rejoining must never show the
+// previous run's messages. Clears both the array and the DOM, called
+// from backToLobby and at the top of startGame.
+function clearChat() {
+  chatLog.length = 0;
+  const el = $('chat-log');
+  if (el) el.innerHTML = '';
 }
 
 // ---------- Inventory ----------
@@ -138,50 +146,67 @@ function damageTool(slot) {
 }
 
 // ---------- Start ----------
-window.startGame = function (worldDef) {
+// Async: the world build is async now, so callers MUST await this —
+// the Play handler hides its loading overlay only after this resolves.
+// onProgress (optional, from the Play path) is buildWorld's
+// (phaseLabel, fraction) callback, passed straight through initScene.
+window.startGame = async function (worldDef, onProgress) {
+  // Fresh run, including a fresh chat: no previous messages carry over.
+  clearChat();
   W = worldDef;
   started = true;
-  // Fresh run state: re-entering a world (e.g. via pause → lobby →
-  // Play) must not carry stale placed pieces, cars, crops, or drops.
-  placed = []; cars = []; crops = []; drops = [];
-  driving = null; buildMode = false; chatOpen = false; pauseOpen = false;
-  $('pause-menu').classList.add('hidden');
-  $('shop-panel').classList.add('hidden');
-  $('inv-panel').classList.add('hidden');
-  const params = new URLSearchParams(location.search);
-  if (params.get('time') === 'night') time = 22 / 24 * 1800;
-  if (params.get('time') === 'day') time = 10 / 24 * 1800;
-  initScene();
-  loadSave();
-  // Test-only URL hooks (same harmless family as ?demo=1, ?shot=, ?time=):
-  // ?tools=1 gives all four tools (for screenshots); ?place=1 drops a row
-  // of buildable models near spawn (workbench, vehicle machine, chest,
-  // gas pump, wall) so their rebuilt models can be inspected.
-  if (params.get('tools') === '1') {
-    for (const id of ['pickaxe', 'shovel', 'hoe']) {
-      if (!P.hotbar.some((s) => s.id === id)) P.hotbar.push({ id, n: 1, dur: ITEMS[id].maxDur });
+  try {
+    // Fresh run state: re-entering a world (e.g. via pause → lobby →
+    // Play) must not carry stale placed pieces, cars, crops, or drops.
+    placed = []; cars = []; crops = []; drops = [];
+    driving = null; buildMode = false; chatOpen = false; pauseOpen = false;
+    $('pause-menu').classList.add('hidden');
+    $('shop-panel').classList.add('hidden');
+    $('inv-panel').classList.add('hidden');
+    const params = new URLSearchParams(location.search);
+    if (params.get('time') === 'night') time = 22 / 24 * 1800;
+    if (params.get('time') === 'day') time = 10 / 24 * 1800;
+    await initScene(onProgress);
+    // Build done even if buildWorld never reported 100% itself: the
+    // bar lands on full before the overlay hides.
+    if (onProgress) onProgress('Entering world…', 1);
+    loadSave();
+    // Test-only URL hooks (same harmless family as ?demo=1, ?shot=, ?time=):
+    // ?tools=1 gives all four tools (for screenshots); ?place=1 drops a row
+    // of buildable models near spawn (workbench, vehicle machine, chest,
+    // gas pump, wall) so their rebuilt models can be inspected.
+    if (params.get('tools') === '1') {
+      for (const id of ['pickaxe', 'shovel', 'hoe']) {
+        if (!P.hotbar.some((s) => s.id === id)) P.hotbar.push({ id, n: 1, dur: ITEMS[id].maxDur });
+      }
     }
-  }
-  if (params.get('place') === '1') {
-    const sp = world.spawn;
-    for (const [itemId, dx, dz] of [['workbench', 0, 5], ['vehicle_machine', 4, 5], ['chest', -4, 5], ['gas_pump', 4, 9], ['wall_wood', -4, 9]]) {
-      const x = sp.x + dx, z = sp.z + dz, y = groundY(x, z);
-      const mesh = buildPieceMesh(itemId);
-      mesh.position.set(x, y, z);
-      scene.add(mesh);
-      placed.push({ itemId, x, z, y, rotY: 0, color: (itemId.startsWith('wall_') ? PIECE_COLORS[itemId.slice(5)] : null) || paintColor, mesh, contents: itemId === 'chest' ? [] : undefined });
+    if (params.get('place') === '1') {
+      const sp = world.spawn;
+      for (const [itemId, dx, dz] of [['workbench', 0, 5], ['vehicle_machine', 4, 5], ['chest', -4, 5], ['gas_pump', 4, 9], ['wall_wood', -4, 9]]) {
+        const x = sp.x + dx, z = sp.z + dz, y = groundY(x, z);
+        const mesh = buildPieceMesh(itemId);
+        mesh.position.set(x, y, z);
+        scene.add(mesh);
+        placed.push({ itemId, x, z, y, rotY: 0, color: (itemId.startsWith('wall_') ? PIECE_COLORS[itemId.slice(5)] : null) || paintColor, mesh, contents: itemId === 'chest' ? [] : undefined });
+      }
     }
+    buildHUDStatic();
+    updateHUD();
+    chatMsg('System', `Welcome to ${W.name}! Chop trees with your wooden axe. Press H for help.`, true);
+    if (params.get('shot') === 'inventory') setTimeout(() => toggleInventory(true), 800);
+    if (params.get('shot') === 'build') setTimeout(() => setBuildMode(true), 800);
+    clock = new THREE.Clock();
+    loop();
+  } catch (err) {
+    // Never leave a half-started game running: no loop is started on
+    // this path (loop() is the last step), so just drop the started
+    // flag and let the caller (Play handler) restore the lobby.
+    started = false;
+    throw err;
   }
-  buildHUDStatic();
-  updateHUD();
-  chatMsg('System', `Welcome to ${W.name}! Chop trees with your wooden axe. Press H for help.`, true);
-  if (params.get('shot') === 'inventory') setTimeout(() => toggleInventory(true), 800);
-  if (params.get('shot') === 'build') setTimeout(() => setBuildMode(true), 800);
-  clock = new THREE.Clock();
-  loop();
 };
 
-function initScene() {
+async function initScene(onProgress) {
   const canvas = $('game-canvas');
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -211,7 +236,7 @@ function initScene() {
   scene.userData.sky = sky;
   scene.userData.hemi = hemi;
 
-  world = buildWorld(scene, W.seed);
+  world = await buildWorld(scene, W.seed, onProgress);
   const sp = world.spawn;
   P.pos.set(sp.x, sp.y, sp.z);
   P.vel.set(0, 0, 0);
@@ -503,16 +528,42 @@ function savePauseSettings() {
   const s = servers.find((x) => x.id === W.id);
   if (s) { s.keepInv = W.keepInv; s.friendly = W.friendly; save('somewhere_servers', servers); }
 }
-function backToLobby() {
+async function backToLobby() {
   pauseOpen = false; pauseSettingsOpen = false;
   $('pause-menu').classList.add('hidden');
   $('pause-settings').classList.add('hidden');
   if (RAF) { cancelAnimationFrame(RAF); RAF = null; }
   started = false;
+  // Save-before-leave ordering unchanged: the save lands before the
+  // game screen hides and before the lobby shows.
   saveGame();
+  clearChat();
   $('game-screen').classList.add('hidden');
-  if (S.showLobby) S.showLobby();
-  else $('lobby-screen').classList.remove('hidden');
+  // Loading overlay while the lobby becomes ready. The progress
+  // readout is reset to a neutral state first — the Play path's last
+  // 100% / "Entering world…" must not linger over a lobby wait.
+  // (Callers ignore the returned promise; the try/finally below is
+  // what guarantees the overlay hides.)
+  const phase = $('loading-phase');
+  if (phase) phase.textContent = 'Loading lobby…';
+  const pct = $('loading-pct');
+  if (pct) pct.textContent = '';
+  const fill = $('loading-fill');
+  if (fill) fill.style.width = '0%';
+  $('loading-screen').classList.remove('hidden');
+  try {
+    if (S.showLobby) S.showLobby();
+    else $('lobby-screen').classList.remove('hidden');
+    // Awaiting an already-resolved promise yields only a microtask,
+    // so when the lobby is already ready no paint happens between the
+    // show above and the hide in the finally — no visible flash. When
+    // the panorama is still building, this waits for its first frame.
+    // lobbyReady is also resolved (not left pending) if the panorama
+    // build failed, so the overlay can never stick on that path either.
+    if (S.lobbyReady) await S.lobbyReady;
+  } finally {
+    $('loading-screen').classList.add('hidden');
+  }
 }
 
 // ---------- Loop ----------
@@ -1175,7 +1226,7 @@ function chopTree(t, toolSlot) {
   const isTempStone = toolSlot && ITEMS[toolSlot.id].temp;
   if (!isTempStone) damageTool(toolSlot);
   if (t.hp <= 0) {
-    scene.remove(t.group);
+    hideTreeInstances(t); // trees are instanced now — hide, don't remove a group
     world.trees = world.trees.filter((x) => x !== t);
     const wood = 2 + Math.floor(Math.random() * 3);
     dropItem('wood', wood, t.x, t.z);
@@ -1199,6 +1250,7 @@ function chopTree(t, toolSlot) {
   } else {
     t.group.scale.setScalar((t.scale || 1) * (1 - (3 - t.hp) * 0.06));
     t.group.rotation.z = (3 - t.hp) * 0.03;
+    refreshTreeInstances(t); // proxy group is detached — push the shake into the instances
   }
   updateHUD();
 }

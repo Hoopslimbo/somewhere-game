@@ -315,6 +315,148 @@ function makeTree(form, rand, snowy) {
   return { group: g, trunkH };
 }
 
+// ---- Async chunking + tree/dirt instancing ----
+// buildWorld is async: it awaits a zero-timeout yield between phases
+// and inside every big loop, so the page never hangs while a ~960k-
+// vertex terrain and thousands of scatter attempts are built. Yields
+// never consume rand() and never reorder iterations, so the world
+// layout per seed is identical to the old sync build.
+// Trees are instanced: each tree is still built by makeTree() exactly
+// as before (same form, same rand() sequence), but its Group is kept
+// as a DETACHED proxy — never added to the scene — and decomposed
+// into canonical-geometry buckets (unit cone / sphere / cylinder,
+// scaled per instance). Per-instance color comes from each part's
+// material color. The proxy is what hit-shake math still mutates
+// (group.scale / group.rotation.z); refreshTreeInstances() then
+// rewrites that tree's instance matrices from the proxy's updated
+// matrixWorld, and hideTreeInstances() hides a felled tree with
+// zero-scale matrices. Instanced meshes get frustumCulled=false:
+// their instances span the whole island, and the default geometry
+// bounds would wrongly cull them.
+const yieldToBrowser = () => new Promise((r) => setTimeout(r, 0));
+const reportProgress = (onProgress, label, frac) => {
+  if (typeof onProgress === 'function') onProgress(label, frac);
+};
+
+// Canonical geometry + per-instance scale for one tree part mesh, so
+// that (instanceMatrix * canonicalGeometry) reproduces the original
+// part exactly. Size is factored out of the geometry and into the
+// scale matrix; shape ratios and segment counts stay in the bucket
+// key, so e.g. a pine cone (ConeGeometry, 8 segments) never shares a
+// bucket with a palm frond (ConeGeometry, 4 segments, translated).
+// Translated geometries (palm fronds, snag branches) are detected
+// from the geometry's bounding-box center: normalized translate =
+// center.y / height, so the canonical geometry is translated by the
+// same fraction and the scale matrix restores the original offset.
+function canonicalFor(mesh) {
+  const geo = mesh.geometry, p = geo.parameters;
+  if (!p) return { key: 'raw|' + geo.uuid, geo, scale: new THREE.Vector3(1, 1, 1) };
+  geo.computeBoundingBox();
+  const centerY = geo.boundingBox ? geo.boundingBox.getCenter(new THREE.Vector3()).y : 0;
+  const rough = mesh.material.roughness, metal = mesh.material.metalness;
+  const suffix = '|r' + rough + '|m' + metal;
+  if (geo.type === 'SphereGeometry') {
+    return {
+      key: 'sph|' + p.widthSegments + '|' + p.heightSegments + suffix,
+      geo: new THREE.SphereGeometry(1, p.widthSegments, p.heightSegments),
+      scale: new THREE.Vector3(p.radius, p.radius, p.radius),
+    };
+  }
+  if (geo.type === 'ConeGeometry') {
+    const normTy = centerY / p.height;
+    const cg = new THREE.ConeGeometry(1, 1, p.radialSegments);
+    if (normTy !== 0) cg.translate(0, normTy, 0);
+    return {
+      key: 'cone|' + p.radialSegments + '|t' + normTy.toFixed(3) + suffix,
+      geo: cg, scale: new THREE.Vector3(p.radius, p.height, p.radius),
+    };
+  }
+  if (geo.type === 'CylinderGeometry') {
+    const ratio = p.radiusTop / p.radiusBottom, normTy = centerY / p.height;
+    const cg = new THREE.CylinderGeometry(ratio, 1, 1, p.radialSegments);
+    if (normTy !== 0) cg.translate(0, normTy, 0);
+    return {
+      key: 'cyl|' + p.radialSegments + '|' + ratio.toFixed(6) + '|t' + normTy.toFixed(3) + suffix,
+      geo: cg, scale: new THREE.Vector3(p.radiusBottom, p.height, p.radiusBottom),
+    };
+  }
+  // Unknown part geometry (no makeTree form produces one today):
+  // keep the geometry itself as its own bucket so it still renders
+  // correctly, just without sharing.
+  return { key: 'raw|' + geo.uuid, geo, scale: new THREE.Vector3(1, 1, 1) };
+}
+
+// Collect one detached tree proxy's parts into shared buckets.
+// No rand() is consumed here; call order and counts are unchanged.
+function collectTreeParts(group, bucketMap, tree) {
+  group.updateMatrixWorld(true);
+  tree.parts = [];
+  group.traverse((obj) => {
+    if (!obj.isMesh) return;
+    const { key, geo, scale } = canonicalFor(obj);
+    let bucket = bucketMap.get(key);
+    if (!bucket) {
+      bucket = { geo, roughness: obj.material.roughness, metalness: obj.material.metalness, items: [] };
+      bucketMap.set(key, bucket);
+    }
+    const scaleMatrix = new THREE.Matrix4().makeScale(scale.x, scale.y, scale.z);
+    const part = { bucketKey: key, proxyMesh: obj, scaleMatrix, mesh: null, index: -1 };
+    const matrix = new THREE.Matrix4().multiplyMatrices(obj.matrixWorld, scaleMatrix);
+    bucket.items.push({ matrix, color: obj.material.color.clone(), part });
+    tree.parts.push(part);
+  });
+}
+
+// Allocate one InstancedMesh per bucket and wire each tree part to
+// its (mesh, index). Called once, after the tree loop.
+function buildTreeInstancedMeshes(scene, bucketMap) {
+  for (const bucket of bucketMap.values()) {
+    const inst = new THREE.InstancedMesh(
+      bucket.geo,
+      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: bucket.roughness, metalness: bucket.metalness }),
+      bucket.items.length);
+    bucket.items.forEach((item, idx) => {
+      inst.setMatrixAt(idx, item.matrix);
+      inst.setColorAt(idx, item.color);
+      item.part.mesh = inst; item.part.index = idx;
+    });
+    inst.castShadow = true; inst.frustumCulled = false;
+    inst.instanceMatrix.needsUpdate = true;
+    if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
+    scene.add(inst);
+  }
+}
+
+// Recompute one tree's instance matrices from its detached proxy
+// after game code mutated proxy scale/rotation (hit shake).
+// Call this after changing tree.group.scale / tree.group.rotation.
+export function refreshTreeInstances(tree) {
+  if (!tree.parts) return;
+  tree.group.updateMatrixWorld(true);
+  const touched = new Set();
+  for (const part of tree.parts) {
+    if (!part.mesh) continue;
+    part.mesh.setMatrixAt(part.index,
+      new THREE.Matrix4().multiplyMatrices(part.proxyMesh.matrixWorld, part.scaleMatrix));
+    touched.add(part.mesh);
+  }
+  for (const mesh of touched) mesh.instanceMatrix.needsUpdate = true;
+}
+
+// Hide a felled tree: zero-scale matrices collapse its instances to
+// a point (invisible), without removing anything from the scene.
+export function hideTreeInstances(tree) {
+  if (!tree.parts) return;
+  const zero = new THREE.Matrix4().makeScale(0, 0, 0);
+  const touched = new Set();
+  for (const part of tree.parts) {
+    if (!part.mesh) continue;
+    part.mesh.setMatrixAt(part.index, zero);
+    touched.add(part.mesh);
+  }
+  for (const mesh of touched) mesh.instanceMatrix.needsUpdate = true;
+}
+
 function jitteredRockGeo(s, rand) {
   // DodecahedronGeometry is NON-indexed: the same corner appears as
   // several separate vertices, one per face. Jittering each vertex
@@ -363,7 +505,10 @@ function lantern(scene, x, z, seed) {
   bulb.position.set(x, h + 1.8, z); scene.add(bulb);
 }
 
-export function buildWorld(scene, seed) {
+export async function buildWorld(scene, seed, onProgress) {
+  // Progress fractions below are overall (0..1) estimates per phase,
+  // so a loading screen can show a single monotonic bar. onProgress
+  // is optional; omitting it changes nothing about the build.
   // 6× land area vs the 760 island: linear × sqrt(6) ≈ 2.45, so 1862
   // across (1862² / 760² = 6.0× area) at the same vertex density
   // (1862/979 ≈ 760/400 ≈ 1.9 units per vertex).
@@ -372,11 +517,16 @@ export function buildWorld(scene, seed) {
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
   pos.count; // positions filled below
+  reportProgress(onProgress, 'Terrain', 0);
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
     pos.setY(i, heightAt(x, z, seed));
+    if ((i + 1) % 20000 === 0) {
+      reportProgress(onProgress, 'Terrain', 0.30 * (i + 1) / pos.count);
+      await yieldToBrowser();
+    }
   }
-  geo.computeVertexNormals();
+  geo.computeVertexNormals(); // single call, kept sync (well under the hung-page threshold)
   // Per-vertex colors: blended per biome, never hard patches or misplaced
   // snow. Base grass/sand/forest colors blend smoothly by region noise;
   // snow appears ONLY above a proper snowline that varies by biome (low in
@@ -386,7 +536,12 @@ export function buildWorld(scene, seed) {
   const normals = geo.attributes.normal;
   const colors = new Float32Array(pos.count * 3);
   const col = new THREE.Color(), tmp = new THREE.Color();
+  reportProgress(onProgress, 'Terrain colors', 0.30);
   for (let i = 0; i < pos.count; i++) {
+    if ((i + 1) % 20000 === 0) {
+      reportProgress(onProgress, 'Terrain colors', 0.30 + 0.25 * (i + 1) / pos.count);
+      await yieldToBrowser();
+    }
     const x = pos.getX(i), z = pos.getZ(i), h = pos.getY(i);
     const r = regionAt(x, z, seed);
     const caveN = fbm(x * 0.006 + 300, z * 0.006, seed);
@@ -458,9 +613,20 @@ export function buildWorld(scene, seed) {
   const rand = mulberry(seed * 7919 + 13);
   const trees = [], rocks = [], chests = [], interactables = [];
   const spawn = findSpawn(seed);
+  // Tree parts are collected into shared instancing buckets here and
+  // allocated once after the loop (see buildTreeInstancedMeshes).
+  // Nothing in this collection consumes rand().
+  const treeBuckets = new Map();
 
   // ---- Trees: groves + clearings, slope-aware, coastal palms ----
+  reportProgress(onProgress, 'Trees', 0.55);
   for (let i = 0; i < 6600; i++) {
+    // Yield at the top so early `continue`s can't push the gap
+    // between yields past the target spacing.
+    if (i > 0 && i % 200 === 0) {
+      reportProgress(onProgress, 'Trees', 0.55 + 0.15 * i / 6600);
+      await yieldToBrowser();
+    }
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
@@ -485,11 +651,30 @@ export function buildWorld(scene, seed) {
     group.scale.setScalar(s);
     group.position.set(x, h - 0.1, z);
     group.rotation.y = rand() * Math.PI * 2;
-    scene.add(group);
-    trees.push({ group, x, z, h, hp: 3, kind: form, trunkH: trunkH * s, radius: 0.6 * s, scale: s });
+    // NOT scene.add(group): the group stays a detached proxy (see the
+    // instancing note above) and its parts go into treeBuckets.
+    // The tree record keeps `group` as that proxy, plus `parts`
+    // (per-part {mesh, index} into the instanced buckets); every
+    // other field is unchanged, so findTarget/collideWorld work
+    // untouched.
+    const tree = { group, x, z, h, hp: 3, kind: form, trunkH: trunkH * s, radius: 0.6 * s, scale: s, parts: [] };
+    collectTreeParts(group, treeBuckets, tree);
+    trees.push(tree);
   }
+  buildTreeInstancedMeshes(scene, treeBuckets);
+  await yieldToBrowser();
   // ---- Rocks: craggy, tinted, clustered on ridges + high ground ----
+  // Left as individual meshes on purpose (see report): jitteredRockGeo
+  // gives every rock unique per-vertex jitter, which a shared canonical
+  // geometry would erase. Its rand() cost is a constant 60 calls/rock
+  // (verified in node), so instancing them later would be RNG-safe
+  // if that visual trade-off is ever accepted.
+  reportProgress(onProgress, 'Rocks', 0.70);
   for (let i = 0; i < 2100; i++) {
+    if (i > 0 && i % 200 === 0) {
+      reportProgress(onProgress, 'Rocks', 0.70 + 0.05 * i / 2100);
+      await yieldToBrowser();
+    }
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
@@ -508,7 +693,10 @@ export function buildWorld(scene, seed) {
     rocks.push({ mesh: rock, x, z, h, hp: iron ? 4 : 3, iron, radius: s });
   }
   // Ground stones (pickup fallback for chopping)
+  // Left individual like rocks: same per-vertex jitter argument, and
+  // game.js removes them with scene.remove(mesh), which still works.
   const groundStones = [];
+  reportProgress(onProgress, 'Ground stones', 0.75);
   for (let i = 0; i < 240; i++) {
     const x = spawn.x + (rand() - 0.5) * 44, z = spawn.z + (rand() - 0.5) * 44;
     const h = heightAt(x, z, seed);
@@ -517,7 +705,9 @@ export function buildWorld(scene, seed) {
     const st = new THREE.Mesh(jitteredRockGeo(s, rand), pick(MATS.stone, rand));
     st.position.set(x, h + 0.15, z); st.castShadow = true; scene.add(st);
     groundStones.push({ mesh: st, x, z, h });
+    if ((i + 1) % 200 === 0) await yieldToBrowser();
   }
+  await yieldToBrowser();
   // Loot chests (REDESIGNED 2026-10-28, same look as the placed
   // storage chest): deep-wood planked body with seam grooves, an
   // arched lid, steel bands, brass latch, corner protectors — reads
@@ -533,6 +723,7 @@ export function buildWorld(scene, seed) {
     [{ id: 'seed_carrot', n: 4 }, { id: 'money', n: 20 }],
     [{ id: 'iron', n: 2 }, { id: 'leather', n: 2 }, { id: 'seed_wheat', n: 3 }],
   ];
+  reportProgress(onProgress, 'Chests', 0.77);
   for (let i = 0; i < 60; i++) {
     const x = (rand() - 0.5) * (SIZE - 40), z = (rand() - 0.5) * (SIZE - 40);
     const h = heightAt(x, z, seed);
@@ -587,6 +778,7 @@ export function buildWorld(scene, seed) {
     scene.add(grp);
     chests.push({ group: grp, x, z, h, loot: LOOT[i % LOOT.length], opened: false });
   }
+  await yieldToBrowser();
   // ---- Bushes, grass tufts, flowers (instanced — cheap, varied) ----
   const dummy = new THREE.Object3D();
   const bushGeo = new THREE.SphereGeometry(0.7, 7, 5);
@@ -594,7 +786,12 @@ export function buildWorld(scene, seed) {
   const bushes = new THREE.InstancedMesh(bushGeo, bushMat, 2280);
   const bushCol = new THREE.Color();
   let bi = 0;
+  reportProgress(onProgress, 'Bushes', 0.79);
   for (let i = 0; i < 5400 && bi < 2280; i++) {
+    if (i > 0 && i % 1000 === 0) {
+      reportProgress(onProgress, 'Bushes', 0.79 + 0.04 * i / 5400);
+      await yieldToBrowser();
+    }
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
@@ -621,7 +818,12 @@ export function buildWorld(scene, seed) {
   const grass = new THREE.InstancedMesh(grassGeo, grassMat, 9000);
   let gi = 0;
   const grassCol = new THREE.Color();
+  reportProgress(onProgress, 'Grass', 0.83);
   for (let i = 0; i < 20400 && gi < 9000; i++) {
+    if (i > 0 && i % 1000 === 0) {
+      reportProgress(onProgress, 'Grass', 0.83 + 0.07 * i / 20400);
+      await yieldToBrowser();
+    }
     let x, z;
     if (i < 130) { x = spawn.x + (rand() - 0.5) * 36; z = spawn.z + (rand() - 0.5) * 36; }
     else { x = (rand() - 0.5) * (SIZE - 20); z = (rand() - 0.5) * (SIZE - 20); }
@@ -649,7 +851,12 @@ export function buildWorld(scene, seed) {
   const flowers = new THREE.InstancedMesh(flowerGeo, flowerMat, 840);
   const flowerCols = [0xe86a92, 0xf5c542, 0xffffff, 0xc07ae0];
   let fi = 0;
+  reportProgress(onProgress, 'Flowers', 0.90);
   for (let i = 0; i < 2700 && fi < 840; i++) {
+    if (i > 0 && i % 1000 === 0) {
+      reportProgress(onProgress, 'Flowers', 0.90 + 0.02 * i / 2700);
+      await yieldToBrowser();
+    }
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
@@ -673,7 +880,12 @@ export function buildWorld(scene, seed) {
   const pebbles = new THREE.InstancedMesh(pebGeo, pebMat, 5400);
   const pebCol = new THREE.Color();
   let pi = 0;
+  reportProgress(onProgress, 'Pebbles', 0.92);
   for (let i = 0; i < 12000 && pi < 5400; i++) {
+    if (i > 0 && i % 1000 === 0) {
+      reportProgress(onProgress, 'Pebbles', 0.92 + 0.05 * i / 12000);
+      await yieldToBrowser();
+    }
     // First samples cluster near spawn so the ground reads detailed
     // the moment you step out, not just far away
     let x, z;
@@ -700,8 +912,16 @@ export function buildWorld(scene, seed) {
   pebbles.castShadow = true;
   scene.add(pebbles);
   // Dirt patch discs hugging the ground (plains / forest / desert)
-  const dirtMat = new THREE.MeshStandardMaterial({ color: 0x6b4e2e, roughness: 1 });
+  // Instanced like trees: one CircleGeometry(1, 12) + instanceColor,
+  // instead of ~hundreds of individual CircleGeometry meshes with
+  // cloned materials. rand() order is preserved exactly: s, then the
+  // lightness-offset rand (consumed even for desert discs, as before),
+  // then the rotation rand. frustumCulled=false for the same
+  // whole-island reason as the tree buckets.
+  const dirtItems = [];
+  reportProgress(onProgress, 'Dirt patches', 0.97);
   for (let i = 0; i < 1200; i++) {
+    if (i > 0 && i % 1000 === 0) await yieldToBrowser();
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
@@ -709,14 +929,28 @@ export function buildWorld(scene, seed) {
     if (b === 'snowy' || b === 'caved') continue;
     if (slopeAt(x, z, seed) > 0.35) continue; // flat ground only, so discs don't clip into slopes
     const s = 0.8 + rand() * 1.8;
-    const disc = new THREE.Mesh(new THREE.CircleGeometry(s, 12), dirtMat.clone());
-    disc.material.color.offsetHSL(0, 0, (rand() - 0.5) * 0.08);
-    if (b === 'desert') disc.material.color.set(0xc99a5e);
-    disc.rotation.x = -Math.PI / 2;
-    disc.rotation.z = rand() * Math.PI;
-    disc.position.set(x, h + 0.05, z);
-    disc.receiveShadow = true;
-    scene.add(disc);
+    const discCol = new THREE.Color(0x6b4e2e);
+    discCol.offsetHSL(0, 0, (rand() - 0.5) * 0.08);
+    if (b === 'desert') discCol.set(0xc99a5e);
+    dummy.position.set(x, h + 0.05, z);
+    dummy.rotation.set(-Math.PI / 2, 0, rand() * Math.PI);
+    dummy.scale.set(s, s, s);
+    dummy.updateMatrix();
+    dirtItems.push({ matrix: dummy.matrix.clone(), color: discCol });
+  }
+  if (dirtItems.length) {
+    const dirt = new THREE.InstancedMesh(
+      new THREE.CircleGeometry(1, 12),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 }),
+      dirtItems.length);
+    dirtItems.forEach((item, idx) => {
+      dirt.setMatrixAt(idx, item.matrix);
+      dirt.setColorAt(idx, item.color);
+    });
+    dirt.receiveShadow = true; dirt.frustumCulled = false;
+    dirt.instanceMatrix.needsUpdate = true;
+    if (dirt.instanceColor) dirt.instanceColor.needsUpdate = true;
+    scene.add(dirt);
   }
 
   // Gold infinite bench (unbreakable, unmovable) near spawn
@@ -770,5 +1004,6 @@ export function buildWorld(scene, seed) {
   // also removes those interactions until Liam asks for one).
   // A lantern by the gold bench stays: it marks spawn, not a shop.
 
+  reportProgress(onProgress, 'Done', 1);
   return { spawn, trees, rocks, groundStones, chests, interactables, size: SIZE };
 }

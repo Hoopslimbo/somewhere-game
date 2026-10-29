@@ -109,8 +109,29 @@ $('btn-signout').onclick = () => {
 
 // ---------- Lobby 3D ----------
 let lobbyRenderer, panoRenderer, charRenderer, panoScene, panoCam, charScene, charCam, charGroup, custRenderer, custScene, custCam, custGroup, lobbyRAF = null, lobbyClock = new THREE.Clock();
-function initLobby3D() {
-  if (lobbyRenderer) return;
+// Quit-path readiness: S.lobbyReady resolves once the panorama scene is
+// built AND its first frame has rendered (see lobbyLoop). game.js
+// backToLobby awaits it while the loading overlay is up; awaiting an
+// already-resolved promise yields only a microtask, so when the lobby
+// is already ready no paint happens between overlay show and hide —
+// no visible flash. A failed build resolves it anyway (see below) so
+// a waiter can never hang on a promise that never settles.
+let lobbyReadyResolve = null;
+S.lobbyReady = null;
+async function initLobby3D() {
+  if (S.lobbyReady) return S.lobbyReady;
+  S.lobbyReady = new Promise((resolve) => { lobbyReadyResolve = resolve; });
+  try {
+    await initLobby3DInner();
+  } catch (err) {
+    // Release any quit-path waiter: the lobby screen still shows, just
+    // without its panorama. startLobbyLoop logs the error.
+    if (lobbyReadyResolve) { lobbyReadyResolve(); lobbyReadyResolve = null; }
+    throw err;
+  }
+  return S.lobbyReady;
+}
+async function initLobby3DInner() {
   const bgCanvas = $('lobby-bg');
   panoRenderer = new THREE.WebGLRenderer({ canvas: bgCanvas, antialias: true });
   panoRenderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -125,7 +146,7 @@ function initLobby3D() {
   panoScene.add(new THREE.HemisphereLight(0xcfe8ff, 0x3d5a34, 0.95));
   const sun = new THREE.DirectionalLight(0xfff2cc, 1.5);
   sun.position.set(60, 90, 30); sun.castShadow = true; panoScene.add(sun);
-  const panoWorld = buildWorld(panoScene, 20261027); // the set lobby world, same for everyone
+  const panoWorld = await buildWorld(panoScene, 20261027); // the set lobby world, same for everyone
   panoScene.userData.center = panoWorld.spawn;
   panoScene.userData.seed = 20261027; // set panorama world seed, same for everyone
   panoScene.userData.camH = null; // smoothed orbit height, set on first frame
@@ -179,6 +200,7 @@ function refreshCharacter() {
 }
 function lobbyLoop() {
   if (!$('lobby-screen') || $('lobby-screen').classList.contains('hidden')) { lobbyRAF = null; return; }
+  if (!panoScene || !panoRenderer) { lobbyRAF = null; return; } // failed panorama build: no scene to render
   const dt = Math.min(lobbyClock.getDelta(), 0.05);
   const t = lobbyClock.elapsedTime;
   const ang = t * 0.045; // slow panorama rotation, Minecraft-style (speed unchanged)
@@ -204,6 +226,9 @@ function lobbyLoop() {
   panoCam.position.set(ctr.x + Math.cos(ang) * R, camH, ctr.z + Math.sin(ang) * R);
   panoCam.lookAt(ctr.x, ctr.y + 2, ctr.z);
   panoRenderer.render(panoScene, panoCam);
+  // First panorama frame rendered: the quit path may now hide its
+  // loading overlay. Resolved once; later frames are no-ops.
+  if (lobbyReadyResolve) { lobbyReadyResolve(); lobbyReadyResolve = null; }
   if (charGroup) charGroup.rotation.y = Math.sin(t * 0.35) * 0.35;
   charRenderer.render(charScene, charCam);
   if (custScene && !$('panel-customize').classList.contains('hidden')) {
@@ -212,8 +237,16 @@ function lobbyLoop() {
   }
   lobbyRAF = requestAnimationFrame(lobbyLoop);
 }
-function startLobbyLoop() {
-  initLobby3D();
+async function startLobbyLoop() {
+  try {
+    await initLobby3D();
+  } catch (err) {
+    // Panorama failed: log it and carry on without the loop — the lobby
+    // UI (worlds, Play) still works, and initLobby3D already released
+    // any quit-path waiter so no overlay can stick on this.
+    console.error('Lobby panorama failed to build:', err);
+    return;
+  }
   lobbyClock.start();
   if (!lobbyRAF) lobbyRAF = requestAnimationFrame(lobbyLoop);
 }
@@ -475,12 +508,17 @@ function selectWorld(w) {
   renderWorlds(); renderServers();
   $('btn-play').classList.remove('hidden');
   $('selected-world-label').textContent = 'Selected: ' + w.name;
+  // Close the sheet so the hero character + Play button are visible —
+  // the sheet otherwise keeps covering them after a tap.
+  setWorldsOpen(false);
 }
 function selectServer(s) {
   S.selectedServer = s.id; S.selectedWorld = null;
   renderWorlds(); renderServers();
   $('btn-play').classList.remove('hidden');
   $('selected-world-label').textContent = 'Selected server: ' + s.name;
+  // Same as selectWorld: close the sheet to reveal hero + Play.
+  setWorldsOpen(false);
 }
 function renderWorlds() {
   const list = $('worlds-list');
@@ -631,6 +669,18 @@ $('world-create').onclick = () => {
   }
   $('world-dialog').classList.add('hidden');
 };
+// Loading-overlay progress readout (Play path): percent + phase label,
+// fed by buildWorld's onProgress via startGame. Guards keep a missing
+// element from breaking the Play path.
+function setLoadingProgress(frac, label) {
+  const f = Number.isFinite(frac) ? Math.min(1, Math.max(0, frac)) : 0;
+  const pct = $('loading-pct');
+  if (pct) pct.textContent = Math.round(f * 100) + '%';
+  const fill = $('loading-fill');
+  if (fill) fill.style.width = (f * 100) + '%';
+  const phase = $('loading-phase');
+  if (phase && label) phase.textContent = label;
+}
 $('btn-play').onclick = () => {
   const w = S.worlds.find((x) => x.id === S.selectedWorld);
   const s = S.servers.find((x) => x.id === S.selectedServer);
@@ -640,27 +690,43 @@ $('btn-play').onclick = () => {
   $('lobby-screen').classList.add('hidden');
   $('game-screen').classList.remove('hidden');
   // Pointer lock straight from the Play click: no dead state where the
-  // player can't move or look until they click again.
+  // player can't move or look until they click again. This MUST stay
+  // synchronous in the click handler, before any await below — a lock
+  // request after an await is no longer a user gesture and browsers
+  // reject it. Nothing on the Play path after this point drops it
+  // (see the pointer-lock audit: only pause/menus/chat exit the lock).
   try {
     const lk = $('game-canvas').requestPointerLock();
     if (lk && lk.catch) lk.catch(() => {});
   } catch { /* click-to-lock fallback still works */ }
-  // Loading screen FIRST: the world build is one big synchronous job,
-  // so without a painted loading frame first it just looks like the
-  // game froze. Yield two frames + a beat so the overlay actually
-  // paints, then build; hide it once startGame returns (its loop is
-  // already running by then).
+  // Loading screen FIRST: without a painted loading frame first the
+  // world build just looks like the game froze. Yield two frames + a
+  // beat so the overlay actually paints, then build; hide it ONLY in
+  // the finally after the awaited startGame completes (its loop is
+  // already running by then) — the old sync finally hid it at once,
+  // before the async build finished.
   $('loading-screen').classList.remove('hidden');
-  const go = () => {
-    if (window.startGame) {
-      try { window.startGame(world); } finally { $('loading-screen').classList.add('hidden'); }
-    } else {
-      const iv = setInterval(() => {
-        if (window.startGame) {
-          clearInterval(iv);
-          try { window.startGame(world); } finally { $('loading-screen').classList.add('hidden'); }
-        }
-      }, 100);
+  setLoadingProgress(0, 'Building your island…');
+  const onProgress = (label, frac) => setLoadingProgress(frac, label);
+  const go = async () => {
+    try {
+      if (!window.startGame) {
+        await new Promise((resolve) => {
+          const iv = setInterval(() => {
+            if (window.startGame) { clearInterval(iv); resolve(); }
+          }, 100);
+        });
+      }
+      await window.startGame(world, onProgress);
+    } catch (err) {
+      // Half-started game must not linger: the overlay hides in the
+      // finally below, and the player lands back in the lobby to retry
+      // Play from. startGame already reset its own started flag.
+      console.error('Failed to start game:', err);
+      $('game-screen').classList.add('hidden');
+      showLobby();
+    } finally {
+      $('loading-screen').classList.add('hidden');
     }
   };
   requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(go, 30)));
@@ -901,12 +967,28 @@ if (params.get('autoguest') === '1') {
   S.session = { guest: true, username: 'DemoPlayer', pfp: '' };
   save('somewhere_session', S.session);
   showLobby();
-  setTimeout(() => {
+  setTimeout(async () => {
     const world = { id: 'demo', name: 'Demo Island', seed: 4242, keepInv: false, friendly: true };
     $('lobby-screen').classList.add('hidden');
     $('game-screen').classList.remove('hidden');
-    if (window.startGame) window.startGame(world);
-    else { const iv = setInterval(() => { if (window.startGame) { clearInterval(iv); window.startGame(world); } }, 100); }
+    // Async-safe like the Play path: await the build instead of firing
+    // it sync, and surface a failure on the error overlay rather than
+    // leaving an unhandled rejection.
+    try {
+      if (!window.startGame) {
+        await new Promise((resolve) => {
+          const iv = setInterval(() => {
+            if (window.startGame) { clearInterval(iv); resolve(); }
+          }, 100);
+        });
+      }
+      await window.startGame(world);
+    } catch (err) {
+      console.error('Demo startGame failed:', err);
+      const el = $('error-overlay');
+      el.textContent = 'Error: ' + (err && err.message ? err.message : err);
+      el.classList.remove('hidden');
+    }
   }, 600);
 } else if (S.session) {
   showLobby();

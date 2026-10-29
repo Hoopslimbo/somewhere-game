@@ -80,6 +80,9 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
 .loading-spinner { width: 44px; height: 44px; border-radius: 50%; border: 4px solid rgba(255,255,255,.2); border-top-color: #fff; animation: loading-spin 0.9s linear infinite; }
 @keyframes loading-spin { to { transform: rotate(360deg); } }
 .loading-card p { font-weight: 600; color: rgba(255,255,255,.75); }
+.loading-bar { width: min(320px, 70vw); height: 10px; border-radius: 6px; background: rgba(255,255,255,.15); overflow: hidden; }
+.loading-fill { height: 100%; width: 0%; background: #7ec2ff; border-radius: 6px; transition: width .2s ease; }
+.loading-pct { font-weight: 700; color: #fff; font-size: 15px; }
 
 /* ---------- Lobby ---------- */
 /* Fixed lobby: header, hero (character + friends), and tabs NEVER
