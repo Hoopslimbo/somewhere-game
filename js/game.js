@@ -327,9 +327,12 @@ function bindInput() {
       return;
     }
     if (e.code === kb.build) {
-      if (buildMode) {
-        if (buildOpened && buildOpened.by === 'key' && buildOpened.key === kb.build) setBuildMode(false);
-      } else setBuildMode(true, { by: 'key', key: kb.build });
+      // B is a plain manual toggle, whatever opened build mode
+      // (key, auto-enter on selection change, or debug) — pressing it
+      // while in build mode always exits. The old by/key guard left
+      // auto-entered build mode un-exitable by B.
+      if (buildMode) setBuildMode(false);
+      else setBuildMode(true, { by: 'key', key: kb.build });
       return;
     }
     if (e.code === kb.quickcraft) {
@@ -385,8 +388,8 @@ function bindInput() {
     }
     if (e.button === 0) {
       if (buildMode) { placeGhostPiece(); return; }
-      // Chop/mine/dig need a HOLD, not a spam-click (see startHoldAction).
-      if (target && (target.kind === 'tree' || target.kind === 'rock' || target.kind === 'ground')) { startHoldAction(); return; }
+      // Chop/mine/dig/break need a HOLD, not a spam-click (see startHoldAction).
+      if (target && (target.kind === 'tree' || target.kind === 'rock' || target.kind === 'ground' || target.kind === 'placed')) { startHoldAction(); return; }
       onPrimaryAction();
     } else if (e.button === 2) {
       // In build mode RIGHT-click PLACES, exactly like left-click —
@@ -633,7 +636,7 @@ function updatePlayer(dt) {
   // Shift, or a double-tap of forward held down (see bindInput).
   const crouching = keys['AltLeft'] || keys['AltRight'];
   const sprinting = !crouching && (keys['ShiftLeft'] || keys['ShiftRight'] || (doubleTapSprint && keys[kb.forward]));
-  const speed = crouching ? 4 : sprinting ? 10.5 : 6;
+  const speed = crouching ? 4 : sprinting ? 10.0 : 6;
   // Smooth eye height + sprint FOV zoom-out (base 62, sprint 70) so both
   // transitions glide instead of snapping.
   curEyeH += ((crouching ? 1.05 : 1.65) - curEyeH) * Math.min(1, dt * 10);
@@ -1103,20 +1106,37 @@ function updateTargetPrompt() {
   }
 }
 
-// ---------- Hold to chop / mine ----------
-// Chopping and mining require HOLDING left click: hits repeat while
-// held and stop on release. A lone click does NOTHING — the first hit
-// only fires 260ms into a continuous hold, so spam-clicking can never
-// chop a tree or mine a rock. Smash/harvest/hoe stay single-click.
-let holdTimer = null, holdKind = null, holdRef = null;
+// ---------- Hold to chop / mine / dig / break ----------
+// Chopping, mining, digging, and breaking placed pieces require
+// HOLDING left click: hits repeat while held and stop on release. A
+// lone click does NOTHING — the first hit only fires 260ms into a
+// continuous hold, so spam-clicking can never chop a tree, mine a
+// rock, or smash a wall. Harvest stays single-click.
+let holdTimer = null, holdKind = null, holdRef = null, holdToolId = null;
 function startHoldAction() {
-  if (!target || (target.kind !== 'tree' && target.kind !== 'rock' && target.kind !== 'ground')) return;
+  if (!target || (target.kind !== 'tree' && target.kind !== 'rock' && target.kind !== 'ground' && target.kind !== 'placed')) return;
   stopHoldAction();
   holdKind = target.kind; holdRef = target.kind === 'ground' ? { x: target.x, z: target.z } : target.ref;
+  // Breaking a placed piece ends the hold if the held item changes
+  // mid-hold (including the tool breaking) — captured here so the
+  // tick can compare against the live selection.
+  const _sel = selectedItem(); holdToolId = _sel ? _sel.id : null;
   const tick = () => {
-    // Still holding the SAME tree/rock/ground cell, still in the world,
-    // with a valid tool? Anything else ends the hold with no progress.
-    if (holdKind === 'ground') {
+    // Still holding the SAME tree/rock/ground cell/placed piece, still
+    // in the world, with a valid tool? Anything else ends the hold
+    // with no progress.
+    if (holdKind === 'placed') {
+      if (!target || target.kind !== 'placed' || target.ref !== holdRef || !placed.includes(holdRef)) { stopHoldAction(); return; }
+      const sel = selectedItem();
+      if ((sel ? sel.id : null) !== holdToolId) { stopHoldAction(); return; }
+      // Fists work, slowly: the 0.5 baseline matches the ground-stone
+      // fallback, half a wooden tool's power. Tools wear per hit, as
+      // with chopping/mining (damageTool no-ops for fists and temp stones).
+      const power = sel && ITEMS[sel.id]?.tool ? ITEMS[sel.id].power : 0.5;
+      triggerSwing();
+      if (sel && ITEMS[sel.id]?.tool) damageTool(sel);
+      hitPlaced(holdRef, power);
+    } else if (holdKind === 'ground') {
       if (!target || target.kind !== 'ground' || target.x !== holdRef.x || target.z !== holdRef.z) { stopHoldAction(); return; }
       const sel = selectedItem();
       if (!sel || ITEMS[sel.id]?.tool !== 'shovel') { stopHoldAction(); return; }
@@ -1139,7 +1159,7 @@ function startHoldAction() {
 }
 function stopHoldAction() {
   if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
-  holdKind = null; holdRef = null;
+  holdKind = null; holdRef = null; holdToolId = null;
 }
 
 // ---------- Primary action (LEFT click: attack / chop / mine) ----------
@@ -1159,8 +1179,11 @@ function onPrimaryAction() {
     triggerSwing();
     mineRock(target.ref, sel);
   } else if (target.kind === 'placed') {
-    triggerSwing();
-    smashPlaced(target.ref);
+    // Breaking placed pieces is hold-only (see startHoldAction): a
+    // lone click does NOTHING, same as digging. This branch is only
+    // reachable via the debug hook now — the mouse path routes
+    // 'placed' targets to startHoldAction before getting here.
+    return;
   } else if (target.kind === 'crop') {
     harvestCrop(target.ref);
   }
@@ -1265,6 +1288,23 @@ function mineRock(r, toolSlot) {
     else { dropItem('stone', 3, r.x, r.z); }
   }
   updateHUD();
+}
+// Placed-piece HP by material, following the game's durability ladder
+// wood < ice < brick < steel. Machines, furniture and chests sit
+// mid-ladder; a whole house takes steel-tier effort. With fist power
+// 0.5, wood tools 1, stone tools 2: a wood wall falls in 4 fist / 2
+// wood-tool / 1 stone-tool hits; steel takes 12 / 6 / 3.
+function pieceHP(itemId) {
+  if (itemId === 'wall_steel' || itemId === 'house') return 6;
+  if (itemId === 'wall_brick') return 4;
+  if (itemId === 'wall_ice') return 3;
+  if (itemId === 'wall_wood' || itemId === 'wall_window' || itemId === 'wall_door' || itemId === 'floor' || itemId === 'roof') return 2;
+  return 3;
+}
+function hitPlaced(p, power) {
+  if (p.hp === undefined || p.hp === null) p.hp = pieceHP(p.itemId);
+  p.hp -= power;
+  if (p.hp <= 0) { stopHoldAction(); smashPlaced(p); }
 }
 function smashPlaced(p) {
   scene.remove(p.mesh);
@@ -1661,7 +1701,7 @@ function buildPieceMesh(itemId, colorOverride) {
   }
   return g;
 }
-function setBuildMode(on, opened) {
+function setBuildMode(on, opened, quiet) {
   buildMode = on;
   $('build-bar').classList.toggle('hidden', !on);
   if (on) {
@@ -1681,7 +1721,10 @@ function setBuildMode(on, opened) {
     // the held item does (see syncBuildSel).
     buildTrackSlot = selSlot; buildTrackId = active ? active.id : null;
     renderBuildBar();
-    toast('Build mode — left- or right-click to place, B or switch to a non-building item to exit. Pieces need ground beneath them.');
+    // Auto-entry (selection change to a placeable) enters quietly —
+    // no toast spam every time the player switches to a wall. Manual
+    // B entry still shows the hint.
+    if (!quiet) toast('Build mode — left- or right-click to place, B or switch to a non-building item to exit. Pieces need ground beneath them.');
   } else {
     buildOpened = null;
     if (ghost) { scene.remove(ghost); ghost = null; }
@@ -1696,10 +1739,36 @@ function setBuildMode(on, opened) {
 // with an axe held while buildSel came from inventory) does not exit
 // — only an actual change of the held item does.
 let buildTrackSlot = -1, buildTrackId = null;
+// Auto-enter tracking: the last selection syncBuildSel saw, whether
+// or not build mode was open. Auto-enter fires ONLY on an actual
+// CHANGE to a placeable — so a B-exit while still holding a placeable
+// (no change since the last check) never re-enters, and only a real
+// switch does. The first observation only sets the baseline.
+let autoTrackSlot = -1, autoTrackId = null;
 function syncBuildSel() {
-  if (!buildMode) { buildTrackSlot = -1; buildTrackId = null; return; }
   const sel = selectedItem();
   const id = sel ? sel.id : null;
+  const first = autoTrackSlot === -1 && autoTrackId === null;
+  const changed = !first && (selSlot !== autoTrackSlot || id !== autoTrackId);
+  autoTrackSlot = selSlot; autoTrackId = id;
+  if (!buildMode) {
+    buildTrackSlot = -1; buildTrackId = null;
+    // Auto-ghost: switching TO a placeable enters build mode on its
+    // own — no B press needed. Quiet (no toast), pure gameplay only
+    // (no panel open), and never mid-hold (a tool breaking mid-swing
+    // can shift a placeable into the selected slot — that must not
+    // pop build mode while the player is still holding click).
+    // Panel check is inlined here (mirrors anyPanelOpen) because that
+    // helper is scoped inside bindInput and unreachable from here.
+    const panelOpen = !$('inv-panel').classList.contains('hidden') ||
+      !$('shop-panel').classList.contains('hidden') ||
+      !$('help-panel').classList.contains('hidden') ||
+      !$('pause-menu').classList.contains('hidden');
+    if (changed && sel && ITEMS[sel.id]?.placeable && !panelOpen && !holdTimer) {
+      setBuildMode(true, { by: 'auto', key: null }, true);
+    }
+    return;
+  }
   if (selSlot === buildTrackSlot && id === buildTrackId) return;
   buildTrackSlot = selSlot; buildTrackId = id;
   if (sel && ITEMS[sel.id]?.placeable) {
@@ -1726,16 +1795,21 @@ function renderBuildBar() {
 function ghostAim() {
   // Build placement follows the first-person crosshair ray: march along
   // the look ray until it hits the ground (max 7 units), and place there.
+  // FREE placement: coordinates stay continuous — no grid snap — so
+  // pieces can sit flush against each other instead of jumping a full
+  // unit. Accepted side effect: pieces can overlap, since there is no
+  // piece-vs-piece collision. ghostValid's rules (range, water, tree
+  // clearance) are unchanged. (tillSoil's farming grid is untouched —
+  // that grid is farming, not building.)
   const fx = -Math.sin(P.yaw) * Math.cos(P.pitch), fy = Math.sin(P.pitch), fz = -Math.cos(P.yaw) * Math.cos(P.pitch);
   const ex = P.pos.x, ey = P.pos.y + curEyeH, ez = P.pos.z;
   for (let d = 0.5; d <= 7; d += 0.5) {
     const x = ex + fx * d, y = ey + fy * d, z = ez + fz * d;
     if (y <= groundY(x, z) + 0.15) {
-      const rx = Math.round(x), rz = Math.round(z);
-      return { x: rx, z: rz, y: groundY(rx, rz) };
+      return { x, z, y: groundY(x, z) };
     }
   }
-  const x = Math.round(ex + fx * 7), z = Math.round(ez + fz * 7);
+  const x = ex + fx * 7, z = ez + fz * 7;
   return { x, z, y: groundY(x, z) };
 }
 function ghostValid(x, z) {
@@ -2404,7 +2478,7 @@ function saveGame() {
   save('somewhere_save_' + W.id, {
     inv: P.inv, hotbar: P.hotbar, perm: P.perm, money: P.money, hp: P.hp, hunger: P.hunger,
     hasBackpack: P.hasBackpack, landOwned: P.landOwned,
-    placed: placed.map((p) => ({ itemId: p.itemId, x: p.x, z: p.z, y: p.y, rotY: p.rotY || 0, color: p.color, contents: p.contents })),
+    placed: placed.map((p) => ({ itemId: p.itemId, x: p.x, z: p.z, y: p.y, rotY: p.rotY || 0, color: p.color, contents: p.contents, hp: p.hp })),
     crops: crops.filter((c) => c.seed).map((c) => ({ x: c.x, z: c.z, seed: c.seed, planted: c.planted })),
     // Loot chest states, matched back by position on load (chest
     // placement is deterministic per seed, so positions are stable).

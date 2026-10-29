@@ -118,18 +118,32 @@ let lobbyRenderer, panoRenderer, charRenderer, panoScene, panoCam, charScene, ch
 // a waiter can never hang on a promise that never settles.
 let lobbyReadyResolve = null;
 S.lobbyReady = null;
+let lobbyBuiltResolve = null, lobbyBuiltReject = null;
+S.lobbyBuilt = null;
 async function initLobby3D() {
-  if (S.lobbyReady) return S.lobbyReady;
+  // Two separate promises, because the old single one deadlocked:
+  // startLobbyLoop awaited initLobby3D(), which returned lobbyReady,
+  // which only resolves on the lobby loop's first frame — but the loop
+  // only starts after startLobbyLoop's await finishes. The loop never
+  // started, so the lobby showed DOM only (tabs, nameplate, gradient)
+  // with no panorama and no character, forever.
+  // lobbyBuilt resolves when the 3D build finishes; lobbyReady still
+  // resolves on the loop's first rendered frame (or on build failure).
+  // startLobbyLoop awaits ONLY the build, never the first frame.
+  if (S.lobbyBuilt) return S.lobbyBuilt;
   S.lobbyReady = new Promise((resolve) => { lobbyReadyResolve = resolve; });
+  S.lobbyBuilt = new Promise((resolve, reject) => { lobbyBuiltResolve = resolve; lobbyBuiltReject = reject; });
   try {
     await initLobby3DInner();
+    if (lobbyBuiltResolve) { lobbyBuiltResolve(); lobbyBuiltResolve = null; }
   } catch (err) {
     // Release any quit-path waiter: the lobby screen still shows, just
     // without its panorama. startLobbyLoop logs the error.
     if (lobbyReadyResolve) { lobbyReadyResolve(); lobbyReadyResolve = null; }
+    if (lobbyBuiltReject) { lobbyBuiltReject(err); lobbyBuiltReject = null; }
     throw err;
   }
-  return S.lobbyReady;
+  return S.lobbyBuilt;
 }
 async function initLobby3DInner() {
   const bgCanvas = $('lobby-bg');
