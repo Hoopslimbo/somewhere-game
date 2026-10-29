@@ -665,6 +665,7 @@ function openWorldDialog(isServer) {
   $('world-name').value = '';
   $('world-keepinv').checked = false;
   $('world-friendly').checked = true;
+
   $('world-dialog').classList.remove('hidden');
   $('world-name').focus();
 }
@@ -768,9 +769,23 @@ function setFriendsView(view) {
 }
 function setFriendsOpen(open) {
   friendsOpen = open;
-  $('lobby-screen').classList.toggle('friends-open', open);
-  if (open) { friendSearchQuery = ''; if ($('friend-search')) $('friend-search').value = ''; setFriendsView('normal'); }
+  // Body-level class: the panel lives outside the lobby screen so it
+  // can slide in over the game screen too (F works in game as well).
+  document.body.classList.toggle('friends-open', open);
+  if (open) {
+    friendSearchQuery = ''; if ($('friend-search')) $('friend-search').value = ''; setFriendsView('normal');
+    // In game, opening the panel frees the cursor like any other menu.
+    if (!$('game-screen').classList.contains('hidden')) document.exitPointerLock?.();
+  } else if (!$('game-screen').classList.contains('hidden')) {
+    // Closing in game re-locks only when no other menu is open.
+    const otherOpen = !$('inv-panel').classList.contains('hidden') || !$('shop-panel').classList.contains('hidden') ||
+      !$('help-panel').classList.contains('hidden') || !$('pause-menu').classList.contains('hidden');
+    if (!otherOpen) S.requestGameLock?.();
+  }
 }
+// The game module runs in a separate scope, so it toggles the panel
+// through this bridge (F in game).
+S.setFriendsOpen = setFriendsOpen;
 $('btn-friends').onclick = () => setFriendsOpen(!friendsOpen);
 $('btn-close-friends').onclick = () => setFriendsOpen(false);
 document.addEventListener('keydown', (e) => {

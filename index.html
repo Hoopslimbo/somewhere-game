@@ -79,36 +79,6 @@
     </div>
   </div>
 
-  <!-- Friends slide-in panel: hidden by default; the circular Friends button
-       below the header bar, or F, slides it in from the right edge, full height. -->
-  <aside class="friends-panel" id="friends-panel">
-    <div class="friends-head">
-      <h3>Friends</h3>
-      <button id="btn-close-friends" class="btn small ghost" title="Close friends">✕</button>
-    </div>
-    <!-- Normal friends view (default): search your own friends list, with
-         a square + button beside the search bar that opens the Add view. -->
-    <div id="friends-view">
-      <div class="friends-search-row">
-        <input id="friend-search" type="text" maxlength="15" placeholder="Search friends" aria-label="Search friends">
-        <button id="btn-add-view" class="btn-add-square" title="Add friend" aria-label="Add friend">+</button>
-      </div>
-      <div id="friends-list"></div>
-    </div>
-    <!-- Add view: search for a friend by username, back arrow returns to
-         the normal friends view. -->
-    <div id="friends-add-view" class="hidden">
-      <div class="friends-add-head">
-        <button id="btn-back-friends" class="btn small ghost" title="Back to friends">←</button>
-        <h3>Add friends</h3>
-      </div>
-      <div class="add-friend">
-        <input id="friend-name" type="text" maxlength="15" placeholder="Search by username">
-        <button id="btn-add-friend" class="btn small">Add</button>
-      </div>
-      <p class="fine">Search for a friend by username to add them.</p>
-    </div>
-  </aside>
 
   <div class="lobby-bottom" id="lobby-bottom">
     <!-- Trapezoid handle, physically attached to the top edge of the
@@ -227,6 +197,37 @@
     </div>
   </div>
 </section>
+
+  <!-- Friends slide-in panel: hidden by default; the circular Friends button
+       below the header bar, or F, slides it in from the right edge, full height. -->
+  <aside class="friends-panel" id="friends-panel">
+    <div class="friends-head">
+      <h3>Friends</h3>
+      <button id="btn-close-friends" class="btn small ghost" title="Close friends">✕</button>
+    </div>
+    <!-- Normal friends view (default): search your own friends list, with
+         a square + button beside the search bar that opens the Add view. -->
+    <div id="friends-view">
+      <div class="friends-search-row">
+        <input id="friend-search" type="text" maxlength="15" placeholder="Search friends" aria-label="Search friends">
+        <button id="btn-add-view" class="btn-add-square" title="Add friend" aria-label="Add friend">+</button>
+      </div>
+      <div id="friends-list"></div>
+    </div>
+    <!-- Add view: search for a friend by username, back arrow returns to
+         the normal friends view. -->
+    <div id="friends-add-view" class="hidden">
+      <div class="friends-add-head">
+        <button id="btn-back-friends" class="btn small ghost" title="Back to friends">←</button>
+        <h3>Add friends</h3>
+      </div>
+      <div class="add-friend">
+        <input id="friend-name" type="text" maxlength="15" placeholder="Search by username">
+        <button id="btn-add-friend" class="btn small">Add</button>
+      </div>
+      <p class="fine">Search for a friend by username to add them.</p>
+    </div>
+  </aside>
 
 <!-- Loading screen: shown between Play and world entry so the big
      synchronous world build doesn't look like a frozen lag spike. -->

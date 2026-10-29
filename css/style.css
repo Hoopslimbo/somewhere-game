@@ -365,13 +365,16 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
    it via display: none on the hero ancestor. */
 #lobby-screen .lobby-center { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 4; }
 #lobby-screen #char-canvas { width: 312px; height: 390px; }
-#lobby-screen .friends-panel { position: fixed; right: 0; top: 0; bottom: 0; width: 320px; max-width: 86vw; max-height: none; border-radius: 20px 0 0 20px; z-index: 40; transform: translateX(105%); transition: transform .32s ease; overflow-y: auto; }
+/* The panel lives at body level (not inside the lobby screen) so it can
+   slide in over the game screen too — F opens it in game as well as in
+   the lobby. Visibility is driven by body.friends-open. */
+.friends-panel { position: fixed; right: 0; top: 0; bottom: 0; width: 320px; max-width: 86vw; max-height: none; border-radius: 20px 0 0 20px; z-index: 40; transform: translateX(105%); transition: transform .32s ease; overflow-y: auto; }
 /* Circular friends button: lives BELOW the header bar (not inside it),
    top right, and sits above the friends panel (z 45 > 40) so it stays
    visible and clickable whether the panel is open or closed. */
 .friends-fab { position: fixed; top: 84px; right: 24px; width: 52px; height: 52px; border-radius: 50%; background: rgba(10,15,32,.72); border: 1px solid rgba(255,255,255,.10); color: var(--text); display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 45; backdrop-filter: blur(16px); box-shadow: 0 16px 40px rgba(0,0,0,.35); transition: transform .15s ease, background .15s ease; padding: 0; }
 .friends-fab:hover { transform: scale(1.06); background: rgba(18,26,52,.85); }
-#lobby-screen.friends-open .friends-fab { display: none; }
+body.friends-open .friends-fab { display: none; }
 /* Same treatment when the worlds sheet is open in play mode: the fab
    sits at z 45 above the sheet (z 25), so it otherwise floats over —
    "phases through" — the worlds panel. In menu mode the sheet is
@@ -386,7 +389,7 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
 #friends-add-view .add-friend input { clip-path: none; border-radius: 12px; }
 .friends-fab:active { transform: scale(.97); }
 .friends-fab svg { width: 28px; height: 28px; display: block; }
-#lobby-screen.friends-open .friends-panel { transform: translateX(0); }
+body.friends-open .friends-panel { transform: translateX(0); }
 .friends-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .friends-head h3 { margin-bottom: 0; }
 /* Worlds panel, Fortnite-style slide-up: in Play mode the panel is a

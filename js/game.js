@@ -287,7 +287,8 @@ async function initScene(onProgress) {
 
 // ---------- Input ----------
 // Controls: LEFT click = attack / chop / mine / place. RIGHT click =
-// interact (chests, benches, shops, cars). E still interacts too.
+// interact (chests, benches, shops, cars); HOLD right click eats held
+// food. E still interacts too. F = friends, P = pause (like Esc).
 let inputBound = false;
 function bindInput() {
   // Bound once: re-entering a world (pause → lobby → Play) must not
@@ -303,6 +304,12 @@ function bindInput() {
       if (e.code === 'Escape') closeChat();
       return;
     }
+    // Typing in a panel text field (friends search/add) must not fire
+    // game actions — 'f' in the search box must not close the panel,
+    // 'p' must not open pause, and so on. (Chat input stops
+    // propagation on its own, so it never reaches here.)
+    const tag = (document.activeElement && document.activeElement.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
     // Double-tap forward = sprint while forward stays held (released
     // forward clears it — see keyup below). forwardHeld tracks the
     // physical hold: keys[] is already true by this point in the
@@ -313,9 +320,11 @@ function bindInput() {
       forwardHeld = true;
       lastForwardDown = now;
     }
-    if (e.code === 'Escape') {
+    // Esc opens/closes pause; P does exactly the same (Liam's key).
+    if (e.code === 'Escape' || e.code === 'KeyP') {
       if (pauseSettingsOpen) { backToPauseMenu(); return; }
       if (pauseOpen) { closePause(); return; }
+      if (document.body.classList.contains('friends-open')) { S.setFriendsOpen?.(false); return; }
       if (!$('inv-panel').classList.contains('hidden') || !$('shop-panel').classList.contains('hidden') ||
           !$('help-panel').classList.contains('hidden')) {
         closePanels();
@@ -368,7 +377,14 @@ function bindInput() {
     if (e.code === 'Digit8') { selSlot = 7; updateHUD(); }
     if (e.code === 'Digit9') { selSlot = 8; updateHUD(); }
     if (e.code === 'Digit0') { selSlot = 9; updateHUD(); }
-    if (e.code === 'KeyF') { eatSelected(); }
+    // F is friends, everywhere: in the lobby the lobby handler owns it,
+    // in game this branch toggles the same panel. Eating is NOT F —
+    // eating is hold right-click (see startEatHold).
+    if (e.code === 'KeyF') {
+      if ($('game-screen').classList.contains('hidden')) return;
+      S.setFriendsOpen?.(!document.body.classList.contains('friends-open'));
+      return;
+    }
   });
   document.addEventListener('keyup', (e) => {
     keys[e.code] = false;
@@ -390,7 +406,7 @@ function bindInput() {
     // A mouse menu open means the cursor is out and look is stopped —
     // canvas clicks must not re-lock or act until the menu closes.
     if (!$('inv-panel').classList.contains('hidden') || !$('shop-panel').classList.contains('hidden') ||
-        !$('pause-menu').classList.contains('hidden')) return;
+        !$('pause-menu').classList.contains('hidden') || document.body.classList.contains('friends-open')) return;
     if (!locked) {
       try { $('game-canvas').requestPointerLock(); } catch { /* ignore */ }
       return;
@@ -407,6 +423,18 @@ function bindInput() {
       // build mode is B or switching to a non-building item only —
       // Esc opens the pause menu instead (see setBuildMode toast).
       if (buildMode) { placeGhostPiece(); return; }
+      if (driving) { doInteract('mouse'); return; }
+      // HOLD right-click to eat: if the held item is food and the
+      // crosshair is NOT on something right-click would use (chest,
+      // bench, shop, car, drop, ...), holding eats one item instead
+      // of interacting. Interactable targets keep their behavior.
+      const sel = selectedItem();
+      const edible = sel && (sel.id === 'apple' || sel.id === 'carrot' || sel.id === 'wheat');
+      const interactable = target && (target.kind === 'chest' || target.kind === 'goldbench' ||
+        (target.kind === 'placed' && target.ref.itemId === 'workbench') || target.kind === 'shop' ||
+        target.kind === 'carshop' || target.kind === 'landoffice' || target.kind === 'car' ||
+        target.kind === 'groundstone' || target.kind === 'drop');
+      if (edible && !interactable) { rightHeld = true; startEatHold(); return; }
       doInteract('mouse');
     }
   });
@@ -415,8 +443,12 @@ function bindInput() {
   });
   // Releasing left click always ends a chop/mine hold, wherever the
   // release happens (including over a panel or outside the window).
-  document.addEventListener('mouseup', (e) => { if (e.button === 0) stopHoldAction(); });
-  window.addEventListener('blur', stopHoldAction);
+  // Releasing right click ends an eat hold the same way.
+  document.addEventListener('mouseup', (e) => {
+    if (e.button === 0) stopHoldAction();
+    if (e.button === 2) { rightHeld = false; stopEatHold(); }
+  });
+  window.addEventListener('blur', () => { stopHoldAction(); rightHeld = false; stopEatHold(); });
   // True when any in-game panel is open: inventory, workbench / chest /
   // shop (all share .shop-panel), help, or the pause menu (its Settings
   // submenu lives inside the same element). The wheel must scroll such
@@ -425,7 +457,8 @@ function bindInput() {
     return !$('inv-panel').classList.contains('hidden') ||
       !$('shop-panel').classList.contains('hidden') ||
       !$('help-panel').classList.contains('hidden') ||
-      !$('pause-menu').classList.contains('hidden');
+      !$('pause-menu').classList.contains('hidden') ||
+      document.body.classList.contains('friends-open');
   }
   // The wheel changes the hotbar selection ONLY during pure gameplay.
   // The handler stays passive so native panel scrolling is untouched;
@@ -472,13 +505,16 @@ function requestGameLock() {
     if (lk && lk.catch) lk.catch(() => {});
   } catch { /* click-to-lock fallback */ }
 }
+// Lobby module re-locks through this bridge when the friends panel
+// closes in game.
+S.requestGameLock = requestGameLock;
 
 function renderHelp() {
   $('help-panel').innerHTML = `<h3>How to play</h3>
   <p><b>WASD</b> move · <b>Double-tap W</b> sprint (hold W) · <b>Shift</b> sprint · <b>Hold Alt</b> crouch · <b>Mouse</b> look · <b>Space</b> jump<br>
-  <b>Right-click</b> (or <b>E</b>) interact · <b>Hold left-click</b> to chop / mine / dig · <b>Left- or right-click</b> place in build mode · <b>B</b> or switch to a non-building item exits build mode<br>
+  <b>Right-click</b> (or <b>E</b>) interact · <b>Hold right-click</b> eat · <b>Hold left-click</b> to chop / mine / dig · <b>Left- or right-click</b> place in build mode · <b>B</b> or switch to a non-building item exits build mode<br>
   <b>1–7</b> hotbar · <b>8, 9, 0</b> permanent slots (car key, house key) · <b>Scroll</b> switch slot<br>
-  <b>I</b> backpack · <b>B</b> build mode · <b>Q</b> quick craft · <b>T</b> chat · <b>F</b> eat selected food · <b>Esc</b> menu · <b>H</b> this help</p>
+  <b>I</b> backpack · <b>B</b> build mode · <b>Q</b> quick craft · <b>T</b> chat · <b>F</b> friends · <b>Esc</b> or <b>P</b> menu · <b>H</b> this help</p>
   <p>Start: chop trees with your wooden axe. Use the gold bench near spawn to craft walls, tools and machines. Place a vehicle machine, craft a car, and your car key appears in a permanent slot. Watch hunger — eat apples to stay full and regen health.</p>`;
 }
 
@@ -913,6 +949,34 @@ function buildViewmodel() {
   rockMesh.scale.y = 0.78;
   rock.add(rockMesh);
   viewmodels.rock = rock;
+  // Foods: held food shows an actual food model — foods have no tool
+  // type, so updateViewmodel used to show nothing at all when one was
+  // held. Same bottom-right framing as the tools.
+  const apple = mk(0.44, -0.42, -1.05, 0.15, 0.10, -0.15);
+  const appleMesh = new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 10),
+    new THREE.MeshStandardMaterial({ color: 0xd63a2f, roughness: 0.55 }));
+  appleMesh.scale.y = 0.92; apple.add(appleMesh);
+  vmBox(apple, 0.02, 0.08, 0.02, woodDark, 0, 0.13, 0); // stem
+  viewmodels.apple = apple;
+  // Carrot: orange point-down cone + green leafy top
+  const carrot = mk(0.44, -0.42, -1.05, 0.15, 0.10, -0.15);
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.26, 8),
+    new THREE.MeshStandardMaterial({ color: 0xe87a1a, roughness: 0.7 }));
+  cone.rotation.x = Math.PI; carrot.add(cone);
+  const leafM = new THREE.MeshStandardMaterial({ color: 0x3d7a32, roughness: 0.8 });
+  vmBox(carrot, 0.025, 0.12, 0.025, leafM, 0, 0.17, 0);
+  vmBox(carrot, 0.025, 0.10, 0.025, leafM, 0.04, 0.15, 0, 0, 0, 0.4);
+  vmBox(carrot, 0.025, 0.10, 0.025, leafM, -0.04, 0.15, 0, 0, 0, -0.4);
+  viewmodels.carrot = carrot;
+  // Wheat: three golden stalks with grain heads
+  const wheat = mk(0.44, -0.42, -1.05, 0.15, 0.10, -0.15);
+  const stalkM = new THREE.MeshStandardMaterial({ color: 0xc9a227, roughness: 0.8 });
+  const grainM = new THREE.MeshStandardMaterial({ color: 0xe8c95a, roughness: 0.8 });
+  for (const [x, h] of [[-0.05, 0.30], [0, 0.36], [0.05, 0.30]]) {
+    vmBox(wheat, 0.02, h, 0.02, stalkM, x, 0, 0);
+    vmBox(wheat, 0.05, 0.09, 0.05, grainM, x, h / 2 + 0.05, 0);
+  }
+  viewmodels.wheat = wheat;
   for (const g of Object.values(viewmodels)) g.traverse((m) => { if (m.isMesh) m.castShadow = false; });
   // Back-compat: old code references `viewmodel` for driving visibility
   viewmodel = { set visible(v) { for (const g of Object.values(viewmodels)) g.visible = v && g.userData.active; }, get visible() { return false; } };
@@ -924,13 +988,15 @@ function updateViewmodel() {
   const sel = selectedItem();
   // The ground stone's viewmodel is the rock, not the axe — its tool
   // type is 'axe' (it chops), but what you hold must look like a rock.
-  const tool = sel ? (sel.id === 'ground_stone' ? 'rock' : ITEMS[sel.id]?.tool) : null;
-  const show = !driving && !buildMode && !!tool && viewmodels[tool];
+  // Foods have their own viewmodels keyed by item id (they have no
+  // tool type, so without this nothing showed when one was held).
+  const vmKey = sel ? (sel.id === 'ground_stone' ? 'rock' : (viewmodels[sel.id] ? sel.id : ITEMS[sel.id]?.tool)) : null;
+  const show = !driving && !buildMode && !!vmKey && viewmodels[vmKey];
   // Head color matches the inventory identity: wooden axe = red head
   // like its axe icon, stone tools = gray steel, wooden pickaxe = brown.
   const HEAD_COLORS = { axe_wood: 0xc8452f, axe_stone: 0xb8bcc2, pickaxe_wood: 0x8a5a2b, pickaxe: 0xb8bcc2, shovel: 0xb8bcc2, hoe: 0xb8bcc2 };
-  if (sel && viewmodels[tool] && viewmodels[tool].userData.headMat) {
-    viewmodels[tool].userData.headMat.color.set(HEAD_COLORS[sel.id] ?? 0xb8bcc2);
+  if (sel && viewmodels[vmKey] && viewmodels[vmKey].userData.headMat) {
+    viewmodels[vmKey].userData.headMat.color.set(HEAD_COLORS[sel.id] ?? 0xb8bcc2);
   }
   // Item-use animation: a swing is a visible raise-and-strike over
   // ~0.35s, applied to whichever tool is held. Without this the tool
@@ -938,8 +1004,8 @@ function updateViewmodel() {
   const swingP = swingStart ? Math.min(1, (performance.now() - swingStart) / swingDur) : 1;
   const swingCurve = swingP < 1 ? Math.sin(swingP * Math.PI) : 0;
   for (const [k, g] of Object.entries(viewmodels)) {
-    g.userData.active = (k === tool);
-    g.visible = !!show && k === tool;
+    g.userData.active = (k === vmKey);
+    g.visible = !!show && k === vmKey;
     if (g.visible) {
       // Base pose is set at build time (mk rotation); the swing adds a
       // downward chop rotation and a small dip, then settles back.
@@ -1169,6 +1235,24 @@ function startHoldAction() {
 function stopHoldAction() {
   if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
   holdKind = null; holdRef = null; holdToolId = null;
+}
+// ---------- Eat hold (RIGHT-click hold eats one food item) ----------
+// Mirrors the chop/mine hold pattern: one item per hold, no repeat
+// while still held, so a long hold can't eat a whole stack by accident.
+let eatHoldTimer = null, rightHeld = false;
+function startEatHold() {
+  stopEatHold();
+  eatHoldTimer = setTimeout(() => {
+    eatHoldTimer = null;
+    if (!rightHeld || buildMode || driving) return;
+    if (document.body.classList.contains('friends-open')) return;
+    if (!$('inv-panel').classList.contains('hidden') || !$('shop-panel').classList.contains('hidden') ||
+        !$('pause-menu').classList.contains('hidden')) return;
+    eatSelected();
+  }, 450);
+}
+function stopEatHold() {
+  if (eatHoldTimer) { clearTimeout(eatHoldTimer); eatHoldTimer = null; }
 }
 
 // ---------- Primary action (LEFT click: attack / chop / mine) ----------
@@ -2512,12 +2596,13 @@ function eatSelected() {
   const sel = selectedItem();
   if (!sel) return;
   const food = { apple: 15, carrot: 10, wheat: 5 };
-  if (food[sel.id]) {
-    P.hunger = Math.min(100, P.hunger + food[sel.id]);
-    removeCount(sel.id, 1);
-    chatMsg('System', `Ate ${ITEMS[sel.id].name} (+${food[sel.id]} hunger).`, true);
-    updateHUD();
-  }
+  if (!food[sel.id]) return;
+  // No eating at full hunger — the item stays in your inventory.
+  if (P.hunger >= 100) { toast('Hunger is already full!'); return; }
+  P.hunger = Math.min(100, P.hunger + food[sel.id]);
+  removeCount(sel.id, 1);
+  chatMsg('System', `Ate ${ITEMS[sel.id].name} (+${food[sel.id]} hunger).`, true);
+  updateHUD();
 }
 
 // ---------- Save / load ----------
