@@ -505,14 +505,28 @@ function lantern(scene, x, z, seed) {
   bulb.position.set(x, h + 1.8, z); scene.add(bulb);
 }
 
-export async function buildWorld(scene, seed, onProgress) {
+export async function buildWorld(scene, seed, onProgress, opts = {}) {
   // Progress fractions below are overall (0..1) estimates per phase,
   // so a loading screen can show a single monotonic bar. onProgress
   // is optional; omitting it changes nothing about the build.
   // 6× land area vs the 760 island: linear × sqrt(6) ≈ 2.45, so 1862
   // across (1862² / 760² = 6.0× area) at the same vertex density
   // (1862/979 ≈ 760/400 ≈ 1.9 units per vertex).
-  const SIZE = 1862, SEG = 979;
+  // Light build (lobby panorama only): same terrain shape and prop
+  // density near the camera, but a smaller plane (~23% of the area)
+  // at the same vertex density, scaled-down prop counts, and no
+  // gameplay objects (loot chests, ground stones). The lobby camera
+  // orbits 48 units from spawn under fog that hides everything past
+  // ~380 units, so the smaller extent is invisible — but the build
+  // runs ~4x faster, which is the whole lobby wait on a slow machine.
+  const light = !!opts.light;
+  const SIZE = light ? 900 : 1862, SEG = light ? 480 : 979;
+  const TREE_N = light ? 1550 : 6600, ROCK_N = light ? 490 : 2100,
+    BUSH_N = light ? 1260 : 5400, BUSH_CAP = light ? 532 : 2280,
+    GRASS_N = light ? 4770 : 20400, GRASS_CAP = light ? 2100 : 9000,
+    FLOWER_N = light ? 630 : 2700, FLOWER_CAP = light ? 196 : 840,
+    PEB_N = light ? 2800 : 12000, PEB_CAP = light ? 1260 : 5400,
+    DIRT_N = light ? 280 : 1200;
   const geo = new THREE.PlaneGeometry(SIZE, SIZE, SEG, SEG);
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
@@ -620,11 +634,11 @@ export async function buildWorld(scene, seed, onProgress) {
 
   // ---- Trees: groves + clearings, slope-aware, coastal palms ----
   reportProgress(onProgress, 'Trees', 0.55);
-  for (let i = 0; i < 6600; i++) {
+  for (let i = 0; i < TREE_N; i++) {
     // Yield at the top so early `continue`s can't push the gap
     // between yields past the target spacing.
     if (i > 0 && i % 200 === 0) {
-      reportProgress(onProgress, 'Trees', 0.55 + 0.15 * i / 6600);
+      reportProgress(onProgress, 'Trees', 0.55 + 0.15 * i / TREE_N);
       await yieldToBrowser();
     }
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
@@ -670,9 +684,9 @@ export async function buildWorld(scene, seed, onProgress) {
   // (verified in node), so instancing them later would be RNG-safe
   // if that visual trade-off is ever accepted.
   reportProgress(onProgress, 'Rocks', 0.70);
-  for (let i = 0; i < 2100; i++) {
+  for (let i = 0; i < ROCK_N; i++) {
     if (i > 0 && i % 200 === 0) {
-      reportProgress(onProgress, 'Rocks', 0.70 + 0.05 * i / 2100);
+      reportProgress(onProgress, 'Rocks', 0.70 + 0.05 * i / ROCK_N);
       await yieldToBrowser();
     }
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
@@ -697,7 +711,7 @@ export async function buildWorld(scene, seed, onProgress) {
   // game.js removes them with scene.remove(mesh), which still works.
   const groundStones = [];
   reportProgress(onProgress, 'Ground stones', 0.75);
-  for (let i = 0; i < 240; i++) {
+  for (let i = 0; i < (light ? 0 : 240); i++) {
     const x = spawn.x + (rand() - 0.5) * 44, z = spawn.z + (rand() - 0.5) * 44;
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
@@ -724,7 +738,7 @@ export async function buildWorld(scene, seed, onProgress) {
     [{ id: 'iron', n: 2 }, { id: 'leather', n: 2 }, { id: 'seed_wheat', n: 3 }],
   ];
   reportProgress(onProgress, 'Chests', 0.77);
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < (light ? 0 : 60); i++) {
     const x = (rand() - 0.5) * (SIZE - 40), z = (rand() - 0.5) * (SIZE - 40);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
@@ -783,13 +797,13 @@ export async function buildWorld(scene, seed, onProgress) {
   const dummy = new THREE.Object3D();
   const bushGeo = new THREE.SphereGeometry(0.7, 7, 5);
   const bushMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
-  const bushes = new THREE.InstancedMesh(bushGeo, bushMat, 2280);
+  const bushes = new THREE.InstancedMesh(bushGeo, bushMat, BUSH_CAP);
   const bushCol = new THREE.Color();
   let bi = 0;
   reportProgress(onProgress, 'Bushes', 0.79);
-  for (let i = 0; i < 5400 && bi < 2280; i++) {
+  for (let i = 0; i < BUSH_N && bi < BUSH_CAP; i++) {
     if (i > 0 && i % 1000 === 0) {
-      reportProgress(onProgress, 'Bushes', 0.79 + 0.04 * i / 5400);
+      reportProgress(onProgress, 'Bushes', 0.79 + 0.04 * i / BUSH_N);
       await yieldToBrowser();
     }
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
@@ -815,13 +829,13 @@ export async function buildWorld(scene, seed, onProgress) {
   // slightly flattened and tilted, so they read as lawn, not saplings.
   const grassGeo = new THREE.ConeGeometry(0.035, 0.30, 4);
   const grassMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
-  const grass = new THREE.InstancedMesh(grassGeo, grassMat, 9000);
+  const grass = new THREE.InstancedMesh(grassGeo, grassMat, GRASS_CAP);
   let gi = 0;
   const grassCol = new THREE.Color();
   reportProgress(onProgress, 'Grass', 0.83);
-  for (let i = 0; i < 20400 && gi < 9000; i++) {
+  for (let i = 0; i < GRASS_N && gi < GRASS_CAP; i++) {
     if (i > 0 && i % 1000 === 0) {
-      reportProgress(onProgress, 'Grass', 0.83 + 0.07 * i / 20400);
+      reportProgress(onProgress, 'Grass', 0.83 + 0.07 * i / GRASS_N);
       await yieldToBrowser();
     }
     let x, z;
@@ -848,13 +862,13 @@ export async function buildWorld(scene, seed, onProgress) {
   scene.add(grass);
   const flowerGeo = new THREE.SphereGeometry(0.07, 6, 5);
   const flowerMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 });
-  const flowers = new THREE.InstancedMesh(flowerGeo, flowerMat, 840);
+  const flowers = new THREE.InstancedMesh(flowerGeo, flowerMat, FLOWER_CAP);
   const flowerCols = [0xe86a92, 0xf5c542, 0xffffff, 0xc07ae0];
   let fi = 0;
   reportProgress(onProgress, 'Flowers', 0.90);
-  for (let i = 0; i < 2700 && fi < 840; i++) {
+  for (let i = 0; i < FLOWER_N && fi < FLOWER_CAP; i++) {
     if (i > 0 && i % 1000 === 0) {
-      reportProgress(onProgress, 'Flowers', 0.90 + 0.02 * i / 2700);
+      reportProgress(onProgress, 'Flowers', 0.90 + 0.02 * i / FLOWER_N);
       await yieldToBrowser();
     }
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
@@ -877,13 +891,13 @@ export async function buildWorld(scene, seed, onProgress) {
   // Close-up richness: the ground is never a bare flat color up close.
   const pebGeo = new THREE.DodecahedronGeometry(1, 0);
   const pebMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
-  const pebbles = new THREE.InstancedMesh(pebGeo, pebMat, 5400);
+  const pebbles = new THREE.InstancedMesh(pebGeo, pebMat, PEB_CAP);
   const pebCol = new THREE.Color();
   let pi = 0;
   reportProgress(onProgress, 'Pebbles', 0.92);
-  for (let i = 0; i < 12000 && pi < 5400; i++) {
+  for (let i = 0; i < PEB_N && pi < PEB_CAP; i++) {
     if (i > 0 && i % 1000 === 0) {
-      reportProgress(onProgress, 'Pebbles', 0.92 + 0.05 * i / 12000);
+      reportProgress(onProgress, 'Pebbles', 0.92 + 0.05 * i / PEB_N);
       await yieldToBrowser();
     }
     // First samples cluster near spawn so the ground reads detailed
@@ -920,7 +934,7 @@ export async function buildWorld(scene, seed, onProgress) {
   // whole-island reason as the tree buckets.
   const dirtItems = [];
   reportProgress(onProgress, 'Dirt patches', 0.97);
-  for (let i = 0; i < 1200; i++) {
+  for (let i = 0; i < DIRT_N; i++) {
     if (i > 0 && i % 1000 === 0) await yieldToBrowser();
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
     const h = heightAt(x, z, seed);

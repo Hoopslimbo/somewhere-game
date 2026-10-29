@@ -117,8 +117,16 @@ let lobbyRenderer, panoRenderer, charRenderer, panoScene, panoCam, charScene, ch
 // no visible flash. A failed build resolves it anyway (see below) so
 // a waiter can never hang on a promise that never settles.
 let lobbyReadyResolve = null;
+let lobbyIslandReady = false; // true once the panorama build settles (built or failed)
 S.lobbyReady = null;
 S.lobbyBuilt = null; // background panorama-build promise (resolves when the island is in the scene)
+// Progress note for the lobby island build: while the panorama is
+// still building after the lobby appears, a small note shows the
+// percentage so the wait never looks like a stuck blue screen.
+function lobbyBuildProgress(label, frac) {
+  const el = $('lobby-island-note');
+  if (el && !lobbyIslandReady) el.textContent = `Building island… ${Math.round(frac * 100)}%`;
+}
 let lobbySetupDone = false;
 async function initLobby3D() {
   // Fast setup ONLY — renderers, scenes, cameras, character — so the
@@ -138,11 +146,18 @@ async function initLobby3D() {
   initLobby3DSetup();
   S.lobbyBuilt = (async () => {
     try {
-      const panoWorld = await buildWorld(panoScene, 20261027); // the set lobby world, same for everyone
+      // Light build: same terrain and prop density near the camera,
+      // ~4x faster — and it starts at page load (see the boot section),
+      // so by sign-in it is usually already done.
+      const panoWorld = await buildWorld(panoScene, 20261027, lobbyBuildProgress, { light: true }); // the set lobby world, same for everyone
       panoScene.userData.center = panoWorld.spawn;
     } catch (err) {
       // Sky + character still render; only the island is missing.
       console.error('Lobby panorama failed to build:', err);
+    } finally {
+      // Ready either way: the note must never stick on a failed build.
+      lobbyIslandReady = true;
+      $('lobby-island-note')?.classList.add('hidden');
     }
   })();
 }
@@ -278,6 +293,9 @@ function showLobby() {
   $('boot-loading')?.classList.add('hidden');
   $('auth-screen').classList.add('hidden');
   $('lobby-screen').classList.remove('hidden');
+  // Island still building (e.g. fast login right after page load)?
+  // Say so — a blue background with no word looks broken.
+  if (!lobbyIslandReady) $('lobby-island-note')?.classList.remove('hidden');
   $('header-username').textContent = S.session.username;
   setPfp($('header-pfp'), S.session.username);
   $('np-name').textContent = S.session.username;
@@ -1013,6 +1031,11 @@ window.addEventListener('error', (e) => {
   el.textContent = 'Error: ' + (e.message || e.error);
   el.classList.remove('hidden');
 });
+// Start the lobby panorama build NOW, behind the login screen, so by
+// sign-in the island is already built or nearly done. A failure here
+// is logged only — login and lobby UI never depend on this; the lobby
+// loop reuses the same guarded setup when it appears.
+initLobby3D().catch((err) => console.error('Early lobby 3D start failed:', err));
 const params = new URLSearchParams(location.search);
 if (params.get('autoguest') === '1') {
   S.session = { guest: true, username: 'DemoPlayer', pfp: '' };
