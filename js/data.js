@@ -65,6 +65,19 @@ export const ITEMS = {
   jerrycan: { name: 'Jerrycan', chip: '#c23b3b' },
   car_key: { name: 'Car key', permanent: true, chip: '#f5c542' },
   house_key: { name: 'House key', permanent: true, chip: '#d8b25a' },
+  // The Flipped + phone: the phone is a permanent item (third permanent
+  // slot, key 0) that never leaves the bar for that world; the Shadow
+  // Sword is the Darkened's drop — power 3, and with no maxDur it never
+  // wears out, a trophy weapon; the portal command center is placed
+  // like any other machine and opens dimension portals from its keypad.
+  phone: { name: 'Phone', permanent: true, chip: '#7a5cff' },
+  // tool: 'sword' so it never stacks (addItem stacks non-tools) — each
+  // sword is its own slot. Swords have no maxDur, so they never wear out.
+  shadow_sword: { name: 'Shadow Sword', tool: 'sword', power: 5, chip: '#232338' },
+  sword_wood: { name: 'Wood sword', tool: 'sword', power: 1, chip: '#8a5a2b' },
+  sword_stone: { name: 'Stone sword', tool: 'sword', power: 2, chip: '#9aa0a8' },
+  sword_iron: { name: 'Iron sword', tool: 'sword', power: 3, chip: '#c8ccd2' },
+  portal_command: { name: 'Portal command center', placeable: 'portal_command', chip: '#7a5cff' },
 };
 
 // Workbench recipes: [itemId, {costs}, label]
@@ -90,6 +103,11 @@ export const RECIPES = [
   ['backpack', { leather: 4 }, 'Backpack'],
   ['glass', { sandbag: 1 }, 'Glass'],
   ['ice', { snowbag: 1 }, 'Ice block'],
+  ['phone', { iron: 2 }, 'Phone'],
+  ['portal_command', { iron: 4, wood: 4 }, 'Portal command center'],
+  ['sword_wood', { wood: 2 }, 'Wood sword'],
+  ['sword_stone', { stone: 2, wood: 1 }, 'Stone sword'],
+  ['sword_iron', { iron: 2, wood: 1 }, 'Iron sword'],
 ];
 export const QUICK_RECIPES = [
   ['pickaxe_wood', { wood: 3 }, 'Wooden pickaxe (mines stone)'],

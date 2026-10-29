@@ -27,6 +27,12 @@ let curEyeH = 1.65; // smoothed eye height: stand 1.65, crouch 1.05
 // with that same key — mouse-opened menus ignore the key.
 let invOpened = null, buildOpened = null, helpOpened = null, craftOpened = null, shopOpened = null;
 let targetRing = null;
+// ---------- The Flipped + phone (dimension system) ----------
+let darkened = []; // active Darkened mobs (Flipped only)
+let portal = null; // open portal {group, x, z, targetDim, machine, armedAt, openPos}
+let travelFailed = false; // set if a dimension rebuild throws: saves stop so the pre-switch disk save survives until a refresh
+let phoneOpenedAt = 0; // guards the right-click that opens the phone menu from closing it
+let darkenedTimer = 90; // seconds until the next Darkened spawn check (Flipped only)
 
 const P = {
   pos: new THREE.Vector3(), vel: new THREE.Vector3(), yaw: 0, pitch: -0.15,
@@ -168,6 +174,8 @@ window.startGame = async function (worldDef, onProgress) {
     // Fresh run state: re-entering a world (e.g. via pause → lobby →
     // Play) must not carry stale placed pieces, cars, crops, or drops.
     placed = []; cars = []; crops = []; drops = [];
+    darkened = []; portal = null;
+    $('phone-panel').classList.add('hidden');
     driving = null; buildMode = false; chatOpen = false; pauseOpen = false;
     $('pause-menu').classList.add('hidden');
     $('shop-panel').classList.add('hidden');
@@ -245,7 +253,7 @@ async function initScene(onProgress) {
   scene.userData.sky = sky;
   scene.userData.hemi = hemi;
 
-  world = await buildWorld(scene, W.seed, onProgress);
+  world = await buildWorld(scene, W.seed, onProgress, W.dim === 'flipped' ? { mirror: true } : {});
   const sp = world.spawn;
   P.pos.set(sp.x, sp.y, sp.z);
   P.vel.set(0, 0, 0);
@@ -326,6 +334,7 @@ function bindInput() {
       if (pauseOpen) { closePause(); return; }
       if (document.body.classList.contains('friends-open')) { S.setFriendsOpen?.(false); return; }
       if (!$('inv-panel').classList.contains('hidden') || !$('shop-panel').classList.contains('hidden') ||
+          !$('phone-panel').classList.contains('hidden') ||
           !$('help-panel').classList.contains('hidden')) {
         closePanels();
         return;
@@ -406,6 +415,7 @@ function bindInput() {
     // A mouse menu open means the cursor is out and look is stopped —
     // canvas clicks must not re-lock or act until the menu closes.
     if (!$('inv-panel').classList.contains('hidden') || !$('shop-panel').classList.contains('hidden') ||
+        !$('phone-panel').classList.contains('hidden') ||
         !$('pause-menu').classList.contains('hidden') || document.body.classList.contains('friends-open')) return;
     if (!locked) {
       try { $('game-canvas').requestPointerLock(); } catch { /* ignore */ }
@@ -429,6 +439,9 @@ function bindInput() {
       // bench, shop, car, drop, ...), holding eats one item instead
       // of interacting. Interactable targets keep their behavior.
       const sel = selectedItem();
+      // Phone: when its permanent slot is selected, right-click opens
+      // the phone menu instead of interacting with the world.
+      if (sel && sel.id === 'phone') { openPhoneMenu(); return; }
       const edible = sel && (sel.id === 'apple' || sel.id === 'carrot' || sel.id === 'wheat');
       const interactable = target && (target.kind === 'chest' || target.kind === 'goldbench' ||
         (target.kind === 'placed' && target.ref.itemId === 'workbench') || target.kind === 'shop' ||
@@ -456,6 +469,7 @@ function bindInput() {
   function anyPanelOpen() {
     return !$('inv-panel').classList.contains('hidden') ||
       !$('shop-panel').classList.contains('hidden') ||
+      !$('phone-panel').classList.contains('hidden') ||
       !$('help-panel').classList.contains('hidden') ||
       !$('pause-menu').classList.contains('hidden') ||
       document.body.classList.contains('friends-open');
@@ -482,6 +496,17 @@ function bindInput() {
     requestGameLock();
   });
   $('btn-pause').onclick = () => openPause();
+  $('phone-recall').onclick = doPhoneRecall;
+  $('phone-close').onclick = closePhoneMenu;
+  // Right-click again while the phone menu is open closes it (the
+  // canvas handler can't fire while a panel is open). The opening
+  // click itself is ignored via the timestamp guard.
+  document.addEventListener('mousedown', (e) => {
+    if (e.button !== 2) return;
+    if ($('phone-panel').classList.contains('hidden')) return;
+    if (performance.now() - phoneOpenedAt < 200) return;
+    closePhoneMenu();
+  });
   $('pause-resume').onclick = () => closePause();
   $('pause-settings-btn').onclick = () => openPauseSettings();
   $('pause-settings-back').onclick = () => backToPauseMenu();
@@ -513,9 +538,10 @@ function renderHelp() {
   $('help-panel').innerHTML = `<h3>How to play</h3>
   <p><b>WASD</b> move · <b>Double-tap W</b> sprint (hold W) · <b>Shift</b> sprint · <b>Hold Alt</b> crouch · <b>Mouse</b> look · <b>Space</b> jump<br>
   <b>Right-click</b> (or <b>E</b>) interact · <b>Hold right-click</b> eat · <b>Hold left-click</b> to chop / mine / dig · <b>Left- or right-click</b> place in build mode · <b>B</b> or switch to a non-building item exits build mode<br>
-  <b>1–7</b> hotbar · <b>8, 9, 0</b> permanent slots (car key, house key) · <b>Scroll</b> switch slot<br>
+  <b>1–7</b> hotbar · <b>8, 9, 0</b> permanent slots (car key, house key, phone) · <b>Scroll</b> switch slot<br>
   <b>I</b> backpack · <b>B</b> build mode · <b>Q</b> quick craft · <b>T</b> chat · <b>F</b> friends · <b>Esc</b> or <b>P</b> menu · <b>H</b> this help</p>
-  <p>Start: chop trees with your wooden axe. Use the gold bench near spawn to craft walls, tools and machines. Place a vehicle machine, craft a car, and your car key appears in a permanent slot. Watch hunger — eat apples to stay full and regen health.</p>`;
+  <p>Start: chop trees with your wooden axe. Use the gold bench near spawn to craft walls, tools and machines. Place a vehicle machine, craft a car, and your car key appears in a permanent slot. Watch hunger — eat apples to stay full and regen health.</p>
+  <p><b>Phone</b> (craft it with iron at a workbench): select it and <b>right-click</b> to open it. <b>Portal command center</b> (workbench: 4 iron + 4 wood): place it, use its keypad, and walk into the portal to reach The Flipped — a mirrored world of fire and darkness. There, the Darkened hunt you; beat one to earn the Shadow Sword, which poisons enemies. In The Flipped, your phone's <b>Portal Recall</b> calls a portal back to your arrival spot — or drags you home if you're far away.</p>`;
 }
 
 // ---------- Pause menu (Minecraft Bedrock-style) ----------
@@ -582,9 +608,13 @@ async function backToLobby() {
   $('pause-settings').classList.add('hidden');
   if (RAF) { cancelAnimationFrame(RAF); RAF = null; }
   started = false;
+  darkened = []; portal = null;
   // Save-before-leave ordering unchanged: the save lands before the
   // game screen hides and before the lobby shows.
   saveGame();
+  // Next Play always starts in the normal world — the dimension is
+  // runtime-only and never persists across sessions.
+  if (W) W.dim = 'normal';
   clearChat();
   $('game-screen').classList.add('hidden');
   // Loading overlay while the lobby becomes ready. The progress
@@ -619,11 +649,226 @@ async function backToLobby() {
   }
 }
 
+// ---------- The Flipped + phone ----------
+// Portal keypad: rendered into the shared shop panel, like the shop
+// and vehicle-machine panels. The current dimension is not selectable.
+function openPortalKeypad(machine, source) {
+  openMousePanel(source);
+  const panel = $('shop-panel');
+  const dim = W?.dim || 'normal';
+  panel.classList.remove('hidden');
+  panel.innerHTML = `<h3>Portal command center</h3><p class="fine">Select a dimension. A portal opens near this machine — walk into it to travel. It closes behind you.</p>
+    <div class="craft-row"><span>Normal World${dim === 'normal' ? ' (you are here)' : ''}</span><button class="btn small" ${dim === 'normal' ? 'disabled' : ''} data-dim="normal">Open portal</button></div>
+    <div class="craft-row"><span>The Flipped${dim === 'flipped' ? ' (you are here)' : ''}</span><button class="btn small" ${dim === 'flipped' ? 'disabled' : ''} data-dim="flipped">Open portal</button></div>
+    <button class="btn small ghost panel-close">Close</button>`;
+  panel.querySelectorAll('[data-dim]').forEach((b) => b.onclick = () => {
+    panel.classList.add('hidden');
+    openPortal(b.dataset.dim, machine);
+    requestGameLock();
+  });
+}
+function openPortal(targetDim, machine) {
+  // The portal opens 2 units from the machine toward the player.
+  const dx = P.pos.x - machine.x, dz = P.pos.z - machine.z;
+  const d = Math.hypot(dx, dz) || 1;
+  spawnPortal(machine.x + (dx / d) * 2, machine.z + (dz / d) * 2, targetDim, machine);
+  toast('Portal open — walk into it.');
+}
+function spawnPortal(x, z, targetDim, machine) {
+  closePortal();
+  const group = new THREE.Group();
+  const ringM = new THREE.MeshStandardMaterial({ color: 0x7a5cff, emissive: 0x7a5cff, emissiveIntensity: 1.6, roughness: 0.4 });
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.12, 10, 32), ringM);
+  ring.position.y = 1.6; group.add(ring);
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(1.35, 32),
+    new THREE.MeshStandardMaterial({ color: 0x7a5cff, transparent: true, opacity: 0.35, emissive: 0x7a5cff, emissiveIntensity: 0.8, side: THREE.DoubleSide }));
+  disc.position.y = 1.6; group.add(disc);
+  group.position.set(x, groundY(x, z), z);
+  group.rotation.y = Math.atan2(P.pos.x - x, P.pos.z - z);
+  scene.add(group);
+  // armedAt + openPos: walking in must be a real step, not standing
+  // still where the portal happened to open.
+  portal = { group, x, z, targetDim, machine, armedAt: performance.now() + 1200, openPos: { x: P.pos.x, z: P.pos.z } };
+}
+function closePortal() {
+  if (portal) { scene.remove(portal.group); portal = null; }
+}
+// Dimension travel reuses the proven Play path: save, cancel the loop,
+// rebuild the world (mirrored for The Flipped), then land the player.
+// Portals are never saved — the origin scene is discarded on switch,
+// so a portal you walked through is closed behind you by construction.
+async function switchDimension(dim, arrivePos) {
+  if (!W || W.dim === dim) return;
+  saveGame();
+  if (RAF) { cancelAnimationFrame(RAF); RAF = null; }
+  darkened = []; portal = null;
+  $('phone-panel').classList.add('hidden');
+  W.dim = dim;
+  $('loading-screen').classList.remove('hidden');
+  $('loading-phase').textContent = dim === 'flipped' ? 'Entering The Flipped…' : 'Returning home…';
+  const fill = $('loading-fill'), pct = $('loading-pct');
+  if (fill) fill.style.width = '0%';
+  if (pct) pct.textContent = '0%';
+  const onProgress = (label, frac) => {
+    if (fill) fill.style.width = Math.round(frac * 100) + '%';
+    if (pct) pct.textContent = Math.round(frac * 100) + '%';
+    $('loading-phase').textContent = label;
+  };
+  try {
+    await window.startGame(W, onProgress);
+    if (arrivePos) P.pos.set(arrivePos.x, groundY(arrivePos.x, arrivePos.z) + 0.05, arrivePos.z);
+    chatMsg('System', dim === 'flipped' ? 'You entered The Flipped.' : "You're home.", true);
+  } catch (err) {
+    // The pre-switch disk save is still intact; stop all further saves
+    // so quitting from this broken state can't overwrite it. A refresh
+    // restores a clean session and the intact save.
+    console.error('Dimension travel failed:', err);
+    travelFailed = true;
+    toast('Travel failed — please refresh the page and try again.');
+  } finally {
+    $('loading-screen').classList.add('hidden');
+  }
+}
+// Phone menu: opened by right-click while the phone's permanent slot
+// is selected; right-click again while it is open closes it.
+function openPhoneMenu() {
+  document.exitPointerLock?.();
+  const panel = $('phone-panel');
+  const inFlipped = W?.dim === 'flipped';
+  $('phone-status').textContent = inFlipped
+    ? 'You are in The Flipped. Portal Recall calls a portal back to your arrival spot — or drags you home if you are far away.'
+    : 'You are home. Use a portal command center to travel to The Flipped.';
+  $('phone-recall').disabled = !inFlipped;
+  panel.classList.remove('hidden');
+  phoneOpenedAt = performance.now();
+}
+function closePhoneMenu() {
+  $('phone-panel').classList.add('hidden');
+  requestGameLock();
+}
+function doPhoneRecall() {
+  if (W?.dim !== 'flipped') { toast('You are home — use a command center to travel.'); return; }
+  const a = W.arrival;
+  if (!a) { toast('No arrival point recorded — walk through a portal first.'); return; }
+  const d = Math.hypot(P.pos.x - a.x, P.pos.z - a.z);
+  closePhoneMenu();
+  if (d > 20) {
+    // Dragged through from anywhere, as Liam specified: no trek back.
+    $('loading-screen').classList.remove('hidden');
+    $('loading-phase').textContent = 'Called back…';
+    // Guard: if the player quit to the lobby during the beat, the
+    // recall must not resurrect the game.
+    setTimeout(() => { if (started) switchDimension('normal', { x: W.home?.x ?? P.pos.x, z: (W.home?.z ?? P.pos.z) + 2 }); }, 700);
+  } else {
+    spawnPortal(a.x, a.z, 'normal', null);
+    toast('Portal reopened at your arrival spot — walk in.');
+  }
+}
+// ---------- The Darkened ----------
+// Shadow selves: the player's own character, every material near-black
+// except the eyes, which glow white (eye meshes sit at y 1.90, z 0.215
+// on the face — see character.js).
+function spawnDarkened() {
+  const ang = Math.random() * Math.PI * 2;
+  const dist = 30 + Math.random() * 30;
+  const x = P.pos.x + Math.cos(ang) * dist, z = P.pos.z + Math.sin(ang) * dist;
+  const h = groundY(x, z);
+  if (h < 0.8) return; // never in water
+  const group = buildCharacter(S.char);
+  const shadowM = new THREE.MeshStandardMaterial({ color: 0x0a0a14, roughness: 1 });
+  const eyeM = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 2 });
+  group.traverse((m) => {
+    if (!m.isMesh) return;
+    if (Math.abs(m.position.y - 1.90) < 0.01 && Math.abs(m.position.z - 0.215) < 0.01) m.material = eyeM;
+    else m.material = shadowM;
+  });
+  group.position.set(x, h, z);
+  group.rotation.y = Math.atan2(P.pos.x - x, P.pos.z - z);
+  scene.add(group);
+  darkened.push({ group, hp: 12, lastHit: 0, poisonUntil: 0, poisonAcc: 0 });
+  chatMsg('System', 'Something moves in the dark…', true);
+}
+function killDarkened(d) {
+  scene.remove(d.group);
+  darkened = darkened.filter((x) => x !== d);
+  dropItem('shadow_sword', 1, d.group.position.x, d.group.position.z);
+  chatMsg('System', 'The Darkened dropped a Shadow Sword! Right-click it to pick it up.', true);
+}
+function hitDarkened(d) {
+  const sel = selectedItem();
+  const power = sel ? (ITEMS[sel.id]?.power ?? 0.5) : 0.5;
+  triggerSwing();
+  d.hp -= power;
+  if (sel && sel.id === 'shadow_sword') {
+    if (d.poisonUntil < performance.now()) toast('The Darkened is poisoned!');
+    d.poisonUntil = performance.now() + 5000;
+  }
+  if (sel) damageTool(sel);
+  if (d.hp <= 0) killDarkened(d);
+}
+function updateDarkened(dt) {
+  const now = performance.now();
+  for (let i = darkened.length - 1; i >= 0; i--) {
+    const d = darkened[i];
+    // Shadow Sword poison: 1 damage per second for 5 seconds.
+    if (d.poisonUntil > now) {
+      d.poisonAcc += dt;
+      if (d.poisonAcc >= 1) {
+        d.poisonAcc = 0; d.hp -= 1;
+        if (d.hp <= 0) { killDarkened(d); continue; }
+      }
+    }
+    const dx = P.pos.x - d.group.position.x, dz = P.pos.z - d.group.position.z;
+    const dist = Math.hypot(dx, dz);
+    d.group.rotation.y = Math.atan2(dx, dz);
+    // Chase within 50 units at speed 5 — slower than walk (6) and
+    // sprint (10), so you can always escape.
+    if (dist < 50 && !P.dead && dist > 0.01) {
+      d.group.position.x += (dx / dist) * 5 * dt;
+      d.group.position.z += (dz / dist) * 5 * dt;
+      d.group.position.y = groundY(d.group.position.x, d.group.position.z);
+    }
+    if (dist < 2.5 && !P.dead && now - d.lastHit > 1200) {
+      d.lastHit = now;
+      hurt(8, 'Darkened');
+    }
+  }
+}
+// Per-frame Flipped work: rare Darkened spawns (max 2) and portal
+// walk-ins, in either dimension. Paused games don't spawn or travel.
+function updateFlipped(dt) {
+  if (!started || pauseOpen) return;
+  if (W?.dim === 'flipped') {
+    darkenedTimer -= dt;
+    if (darkenedTimer <= 0) {
+      darkenedTimer = 90 + Math.random() * 60;
+      if (darkened.length < 2) spawnDarkened();
+    }
+    updateDarkened(dt);
+  }
+  if (portal && performance.now() > portal.armedAt && !P.dead) {
+    const d = Math.hypot(P.pos.x - portal.x, P.pos.z - portal.z);
+    const moved = Math.hypot(P.pos.x - portal.openPos.x, P.pos.z - portal.openPos.z);
+    if (d < 2.5 && moved > 1.0) {
+      const targetDim = portal.targetDim;
+      if (targetDim === 'flipped') {
+        W.arrival = { x: portal.x, z: portal.z };
+        W.home = portal.machine ? { x: portal.machine.x, z: portal.machine.z } : W.home;
+      }
+      const arrive = targetDim === 'flipped'
+        ? { x: P.pos.x, z: P.pos.z }
+        : { x: W.home?.x ?? P.pos.x, z: (W.home?.z ?? P.pos.z) + 2 };
+      switchDimension(targetDim, arrive);
+    }
+  }
+}
+
 // ---------- Loop ----------
 function loop() {
   RAF = requestAnimationFrame(loop);
   const dt = Math.min(clock.getDelta(), 0.05);
-  time += dt;
+  // The Flipped is frozen at night — its clock never advances.
+  if (W?.dim !== 'flipped') time += dt;
   updateDayNight(dt);
   if (!P.dead) {
     if (driving) updateDriving(dt);
@@ -633,6 +878,7 @@ function loop() {
   updateDrops(dt);
   updateCarsVisual(dt);
   updateLidAnims();
+  updateFlipped(dt);
   updateHUDDynamic();
   // Sun follows player for shadows
   const sun = scene.userData.sun;
@@ -655,8 +901,10 @@ function updateDayNight() {
   const t = time % 1800;
   const hour = (t / 1800) * 24;
   P.day = Math.floor(time / 1800) + 1;
-  const dayness = hour > 6 && hour < 19 ? 1 : hour >= 5 && hour <= 6 ? (hour - 5) : hour >= 19 && hour <= 20 ? (20 - hour) : 0;
-  const dusk = (hour >= 5 && hour <= 7) ? 1 - Math.abs(hour - 6) : (hour >= 18 && hour <= 20) ? 1 - Math.abs(hour - 19) : 0;
+  let dayness = hour > 6 && hour < 19 ? 1 : hour >= 5 && hour <= 6 ? (hour - 5) : hour >= 19 && hour <= 20 ? (20 - hour) : 0;
+  let dusk = (hour >= 5 && hour <= 7) ? 1 - Math.abs(hour - 6) : (hour >= 18 && hour <= 20) ? 1 - Math.abs(hour - 19) : 0;
+  // The Flipped: frozen night, no dawn or dusk — fire and darkness.
+  if (W?.dim === 'flipped') { dayness = 0; dusk = 0; }
   const sky = scene.userData.sky;
   if (sky) {
     sky.material.uniforms.topColor.value.set(0x050914).lerp(new THREE.Color(0x3d7ac8), dayness);
@@ -666,13 +914,18 @@ function updateDayNight() {
   }
   scene.userData.sun.intensity = 0.25 + dayness * 1.3;
   scene.userData.sun.color.set(0xfff2cc).lerp(new THREE.Color(0xff9a4d), dusk * 0.7);
+  if (W?.dim === 'flipped') scene.userData.sun.color.set(0xff6a1a); // fire-orange sun
   if (scene.userData.hemi) scene.userData.hemi.intensity = 0.35 + dayness * 0.6;
   // No day display in the HUD — the top right stays clean by design.
   // Hunger drain + regen
   P.hunger = Math.max(0, P.hunger - 0.05 * (1 / 60) * 60 * 0.016); // ~1 per 20s, frame-rate independent-ish
 }
+// Mirror helper: in The Flipped the world is mirrored in X, so every
+// terrain query must sample the unmirrored coordinate — the mirrored
+// terrain's height/biome at (x, z) is the original's at (-x, z).
+const mx = (x) => (W && W.dim === 'flipped') ? -x : x;
 function groundY(x, z, yHint) {
-  const h = heightAt(x, z, W.seed);
+  const h = heightAt(mx(x), z, W.seed);
   // Caves REMOVED (2026-10-28): mountains are solid, so ground is just
   // the heightmap. yHint is kept in the signature for callers that
   // still pass it, but no longer changes anything.
@@ -838,6 +1091,14 @@ function dropMeshFor(id) {
     case 'car_key': { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.02, 6, 14), M(0xf5c542, 0.35, 0.8)); ring.position.set(-0.1, 0.05, 0); g.add(ring); bx(0.2, 0.07, 0.04, M(0xf5c542, 0.35, 0.8), 0.08, 0.05, 0); bx(0.05, 0.05, 0.04, M(0xf5c542, 0.35, 0.8), 0.19, -0.02, 0); break; }
     case 'house_key': { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.02, 6, 14), M(0xd8b25a, 0.4, 0.7)); ring.position.set(-0.1, 0.05, 0); g.add(ring); bx(0.2, 0.07, 0.04, M(0xd8b25a, 0.4, 0.7), 0.08, 0.05, 0); break; }
     case 'backpack': bx(0.34, 0.4, 0.2, M(0x6e56cf, 0.85)); bx(0.36, 0.1, 0.22, M(0x5a45b0, 0.85), 0, 0.18, 0); break;
+    case 'shadow_sword': { // dark blade + purple eye at the guard
+      bx(0.05, 0.4, 0.05, M(0x1a1a24, 0.6), 0, -0.05, 0, 0, 0, 0.5);
+      bx(0.06, 0.42, 0.03, M(0x232338, 0.35, 0.5), 0.1, 0.24, 0, 0, 0, 0.5);
+      sph(0.05, new THREE.MeshStandardMaterial({ color: 0xb07aff, emissive: 0xb07aff, emissiveIntensity: 1.4 }), 0.02, 0.16, 0.03); break; }
+    case 'sword_wood': case 'sword_stone': case 'sword_iron': { // grip + guard + material-tinted blade
+      const blade = id === 'sword_wood' ? 0x8a5a2b : id === 'sword_stone' ? 0x9aa0a8 : 0xc8ccd2;
+      bx(0.05, 0.4, 0.05, M(0x1a1a24, 0.6), 0, -0.05, 0, 0, 0, 0.5);
+      bx(0.06, 0.42, 0.03, M(blade, 0.35, 0.5), 0.1, 0.24, 0, 0, 0, 0.5); break; }
     case 'jerrycan': bx(0.3, 0.36, 0.16, M(0xe5484d, 0.6)); bx(0.16, 0.05, 0.05, M(0x1a1a1a, 0.7), 0, 0.2, 0); break;
     case 'chest': bx(0.44, 0.24, 0.28, wood); bx(0.44, 0.1, 0.28, woodDk, 0, 0.16, 0); break;
     case 'workbench': bx(0.5, 0.06, 0.3, wood, 0, 0.12, 0); bx(0.05, 0.24, 0.05, woodDk, -0.2, 0, 0.1); bx(0.05, 0.24, 0.05, woodDk, 0.2, 0, 0.1); break;
@@ -982,6 +1243,33 @@ function buildViewmodel() {
     vmBox(wheat, 0.05, 0.09, 0.05, grainM, x, h / 2 + 0.05, 0);
   }
   viewmodels.wheat = wheat;
+  // Phone: small dark slab with a glowing purple screen.
+  const phone = mk(0.44, -0.42, -1.05, 0.15, 0.10, -0.15);
+  vmBox(phone, 0.16, 0.30, 0.03, new THREE.MeshStandardMaterial({ color: 0x1a1a24, roughness: 0.4 }), 0, 0, 0);
+  vmBox(phone, 0.13, 0.20, 0.035, new THREE.MeshStandardMaterial({ color: 0x2a2a3a, roughness: 0.3, emissive: 0x7a5cff, emissiveIntensity: 0.5 }), 0, 0.02, 0);
+  viewmodels.phone = phone;
+  // Shadow Sword: dark blade, dark grip, and a purple eye where the
+  // handle meets the blade — exactly as Liam described it.
+  const ss = mk();
+  vmBox(ss, 0.045, 0.30, 0.045, woodDark, 0, -0.05, 0); // grip
+  vmBox(ss, 0.16, 0.05, 0.05, new THREE.MeshStandardMaterial({ color: 0x3a3a4a, roughness: 0.5, metalness: 0.4 }), 0, 0.13, 0); // guard
+  vmBox(ss, 0.07, 0.34, 0.025, new THREE.MeshStandardMaterial({ color: 0x232338, roughness: 0.35, metalness: 0.5 }), 0, 0.32, 0); // blade
+  const eye = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 8),
+    new THREE.MeshStandardMaterial({ color: 0xb07aff, emissive: 0xb07aff, emissiveIntensity: 1.6 }));
+  eye.position.set(0, 0.13, 0.035); ss.add(eye);
+  viewmodels.shadow_sword = ss;
+  // Crafted swords: same framing as the Shadow Sword, blade tinted
+  // per material so held wood/stone/iron read apart at a glance.
+  const mkSword = (key, bladeColor) => {
+    const s = mk();
+    vmBox(s, 0.045, 0.30, 0.045, woodDark, 0, -0.05, 0); // grip
+    vmBox(s, 0.16, 0.05, 0.05, steelDark, 0, 0.13, 0); // guard
+    vmBox(s, 0.07, 0.34, 0.025, new THREE.MeshStandardMaterial({ color: bladeColor, roughness: 0.35, metalness: 0.4 }), 0, 0.32, 0); // blade
+    viewmodels[key] = s;
+  };
+  mkSword('sword_wood', 0x8a5a2b);
+  mkSword('sword_stone', 0x9aa0a8);
+  mkSword('sword_iron', 0xc8ccd2);
   for (const g of Object.values(viewmodels)) g.traverse((m) => { if (m.isMesh) m.castShadow = false; });
   // Back-compat: old code references `viewmodel` for driving visibility
   viewmodel = { set visible(v) { for (const g of Object.values(viewmodels)) g.visible = v && g.userData.active; }, get visible() { return false; } };
@@ -1056,6 +1344,7 @@ function findTarget() {
     consider(it.x, groundY(it.x, it.z) + 1, it.z, rad, { kind: it.type, ref: it });
   }
   for (const p of placed) consider(p.x, p.y + 1, p.z, 1.6, { kind: 'placed', ref: p });
+  for (const d of darkened) consider(d.group.position.x, d.group.position.y + 1.1, d.group.position.z, 1.2, { kind: 'darkened', ref: d });
   for (const car of cars) if (!car.broken) consider(car.group.position.x, car.group.position.y + 0.8, car.group.position.z, 2.1, { kind: 'car', ref: car });
   for (const pl of crops) consider(pl.x, groundY(pl.x, pl.z) + 0.3, pl.z, 0.65, { kind: 'crop', ref: pl });
   for (const d of drops) consider(d.x, d.mesh.position.y + 0.2, d.z, 0.8, { kind: 'drop', ref: d });
@@ -1076,7 +1365,7 @@ function findTarget() {
 // natural walkable dirt plain dirt. 'snowy' from biomeAt already means
 // high elevation (h > 17), i.e. the mountain tops, not low snowy ground.
 function digYield(x, z) {
-  const b = biomeAt(x, z, W.seed);
+  const b = biomeAt(mx(x), z, W.seed);
   if (b === 'desert') return 'sandbag';
   if (b === 'snowy') return 'snowbag';
   return 'dirtbag';
@@ -1086,7 +1375,7 @@ function digYieldLabel(id) { return id === 'sandbag' ? 'Sand' : id === 'snowbag'
 // under a generated-structure footprint (interactables) or a placed
 // piece, never a planted crop plot.
 function isDiggableCell(x, z) {
-  if (heightAt(x, z, W.seed) < 0.3) return false; // water, same convention as build placement
+  if (heightAt(mx(x), z, W.seed) < 0.3) return false; // water, same convention as build placement
   for (const it of world.interactables) {
     const rad = (it.radius || 3) + 1;
     if (Math.hypot(it.x - x, it.z - z) < rad) return false;
@@ -1124,6 +1413,7 @@ function targetBasePos(t) {
     case 'drop': return { x: t.ref.x, z: t.ref.z, r: 0.6 };
     case 'chest': return { x: t.ref.x, z: t.ref.z, r: 1.1 };
     case 'car': return { x: t.ref.group.position.x, z: t.ref.group.position.z, r: 2.4 };
+    case 'darkened': return { x: t.ref.group.position.x, z: t.ref.group.position.z, r: 1.2 };
     case 'ground': return { x: t.x, z: t.z, r: 0.7 };
     case 'placed': return { x: t.ref.x, z: t.ref.z, r: 1.8 };
     case 'crop': return { x: t.ref.x, z: t.ref.z, r: 0.7 };
@@ -1231,6 +1521,7 @@ function startEatHold() {
     if (!rightHeld || buildMode || driving) return;
     if (document.body.classList.contains('friends-open')) return;
     if (!$('inv-panel').classList.contains('hidden') || !$('shop-panel').classList.contains('hidden') ||
+        !$('phone-panel').classList.contains('hidden') ||
         !$('pause-menu').classList.contains('hidden')) return;
     eatSelected();
   }, 450);
@@ -1263,6 +1554,8 @@ function onPrimaryAction() {
     return;
   } else if (target.kind === 'crop') {
     harvestCrop(target.ref);
+  } else if (target.kind === 'darkened') {
+    hitDarkened(target.ref);
   }
 }
 // ---------- Interact (RIGHT click, or E) ----------
@@ -1314,6 +1607,7 @@ function doInteract(source) {
     if (p.itemId === 'vehicle_machine') openVehiclePanel(p, source);
     else if (p.itemId === 'gas_pump') refuelNearCar(p);
     else if (p.itemId === 'chest') openStorage(p, source);
+    else if (p.itemId === 'portal_command') openPortalKeypad(p, source);
     else if (p.itemId === 'workbench') openCraft(false, source === 'mouse' ? { by: 'mouse', key: null } : { by: 'key', key: S.keybinds.interact });
   }
   // Trees/rocks/crops on right-click do NOTHING — chopping and mining
@@ -1390,6 +1684,8 @@ function smashPlaced(p) {
   const back = { wall_wood: ['wood', 1], wall_brick: ['stone', 1], wall_steel: ['iron', 1], wall_window: ['wood', 1], wall_door: ['wood', 1], wall_ice: ['ice', 1], floor: ['wood', 1], roof: ['wood', 1] };
   const b = back[p.itemId];
   if (b) { dropItem(b[0], b[1], p.x, p.z); chatMsg('System', `Smashed! Recovered ${b[1]}× ${ITEMS[b[0]].name} — right-click it to pick it up.`, true); }
+  // Smashing the machine hosting an open portal closes that portal.
+  if (portal && portal.machine === p) closePortal();
   // A smashed storage chest drops its contents too — nothing vanishes silently.
   if (p.itemId === 'chest' && p.contents) {
     p.contents.forEach((s, i) => { if (s) dropItem(s.id, s.n, p.x + (i % 3 - 1) * 0.7, p.z + (Math.floor(i / 3) - 1) * 0.7); });
@@ -1711,6 +2007,21 @@ function buildPieceMesh(itemId, colorOverride) {
     for (const [gx, gc] of [[-0.24, 0x46a758], [0, 0xf5c542], [0.24, 0xe5484d]]) // grade buttons
       add(new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.10, 0.04), new THREE.MeshStandardMaterial({ color: gc, roughness: 0.6 })), gx, 0.82, 0.37);
     add(new THREE.Mesh(new THREE.BoxGeometry(0.70, 0.06, 0.72), darkM), 0, 1.72, 0); // cap drip rail
+  } else if (itemId === 'portal_command') {
+    // A portal command center: dark cabinet, glowing purple screen,
+    // and a little keypad beside it for picking a dimension.
+    const bodyM = new THREE.MeshStandardMaterial({ color: 0x2a2a3a, roughness: 0.5, metalness: 0.4 });
+    const darkM = new THREE.MeshStandardMaterial({ color: 0x1a1a24, roughness: 0.6, metalness: 0.3 });
+    const glowM = new THREE.MeshStandardMaterial({ color: 0x7a5cff, emissive: 0x7a5cff, emissiveIntensity: 1.4 });
+    add(new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.22, 1.6), darkM), 0, 0.11, 0); // plinth
+    add(new THREE.Mesh(new THREE.BoxGeometry(2.0, 1.7, 1.1), bodyM), 0, 1.07, 0); // cabinet
+    add(new THREE.Mesh(new THREE.BoxGeometry(2.06, 0.10, 1.16), glowM), 0, 1.95, 0); // top trim
+    add(new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.7, 0.06), new THREE.MeshStandardMaterial({ color: 0x4a3a8a, emissive: 0x7a5cff, emissiveIntensity: 0.9 })), -0.4, 1.35, 0.58); // portal screen
+    add(new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.6, 0.10), darkM), 0.6, 1.25, 0.58); // keypad base
+    for (const [kx, ky] of [[-0.14, 0.14], [0.14, 0.14], [-0.14, -0.14], [0.14, -0.14]]) // keypad buttons
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.04), glowM), 0.6 + kx, 1.25 + ky, 0.64);
+    add(new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.7, 0.06), new THREE.MeshStandardMaterial({ color: 0x4a3a8a, emissive: 0x7a5cff, emissiveIntensity: 0.9 })), -0.4, 1.35, -0.58); // rear screen
+    add(new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.6, 0.10), darkM), 0.6, 1.25, -0.58); // rear keypad
   } else if (itemId === 'chest') {
     // REDESIGNED 2026-10-28: deep-wood planked body with seam grooves,
     // a true arched lid (half-barrel top), steel bands, brass latch
@@ -1839,6 +2150,7 @@ function syncBuildSel() {
     // helper is scoped inside bindInput and unreachable from here.
     const panelOpen = !$('inv-panel').classList.contains('hidden') ||
       !$('shop-panel').classList.contains('hidden') ||
+      !$('phone-panel').classList.contains('hidden') ||
       !$('help-panel').classList.contains('hidden') ||
       !$('pause-menu').classList.contains('hidden');
     if (changed && sel && ITEMS[sel.id]?.placeable && !panelOpen && !holdTimer) {
@@ -1907,7 +2219,7 @@ function ghostAim() {
 function ghostValid(x, z) {
   const d = Math.hypot(x - P.pos.x, z - P.pos.z);
   if (d > 7) return false;
-  if (heightAt(x, z, W.seed) < 0.3) return false; // not in water
+  if (heightAt(mx(x), z, W.seed) < 0.3) return false; // not in water
   for (const t of world.trees) if (Math.hypot(t.x - x, t.z - z) < 1.6) return false;
   return true;
 }
@@ -2447,10 +2759,10 @@ $('btn-quickcraft').onclick = () => openCraft(true, { by: 'mouse', key: null });
 // scan, so recipes sit under category tabs. Same recipes, same costs.
 let craftCat = 'All';
 const CRAFT_CATS = [
-  ['Tools', ['axe_stone', 'pickaxe_wood', 'pickaxe', 'shovel', 'hoe', 'backpack']],
+  ['Tools', ['axe_stone', 'pickaxe_wood', 'pickaxe', 'shovel', 'hoe', 'backpack', 'phone', 'sword_wood', 'sword_stone', 'sword_iron']],
   ['Building', ['wall_wood', 'wall_brick', 'wall_steel', 'wall_window', 'wall_door', 'wall_ice', 'floor', 'roof']],
   ['Furniture', ['chest', 'house_kit']],
-  ['Machines', ['workbench', 'vehicle_machine', 'gas_pump']],
+  ['Machines', ['workbench', 'vehicle_machine', 'gas_pump', 'portal_command']],
   ['Materials', ['glass', 'ice']],
 ];
 function openCraft(quick, opened) {
@@ -2511,6 +2823,17 @@ function renderCraftRows(quick) {
       if (id === 'backpack') {
         P.hasBackpack = true;
         toast('Backpack equipped! Normal inventory is now 40 slots.');
+      } else if (id === 'phone') {
+        // The phone is a permanent item: it goes to the third permanent
+        // slot (key 0), never the inventory, and crafting a second one
+        // refunds instead of consuming iron.
+        if (P.perm[2]) {
+          for (const [c, n] of taken) if (n > 0) addItem(c, n);
+          toast('You already have a phone.');
+        } else {
+          P.perm[2] = { id: 'phone', n: 1 };
+          toast('Phone equipped! Select it and right-click to open it.');
+        }
       } else if (!addItem(id, 1)) {
         for (const [c, n] of taken) if (n > 0) addItem(c, n);
         if (!ITEMS[id]?.tool) toast('Inventory full — make room first.'); // tool outputs already toasted by pushToInv
@@ -2526,6 +2849,7 @@ function closePanels() {
   $('inv-panel').classList.add('hidden');
   $('inv-panel').classList.remove('craft-mode');
   $('shop-panel').classList.add('hidden');
+  $('phone-panel').classList.add('hidden');
   $('help-panel').classList.add('hidden');
   $('craft-list').innerHTML = '';
   invOpened = null; craftOpened = null; helpOpened = null; shopOpened = null;
@@ -2623,16 +2947,27 @@ function eatSelected() {
 
 // ---------- Save / load ----------
 function saveGame() {
-  if (!W) return;
-  save('somewhere_save_' + W.id, {
-    inv: P.inv, hotbar: P.hotbar, perm: P.perm, money: P.money, hp: P.hp, hunger: P.hunger,
-    hasBackpack: P.hasBackpack, landOwned: P.landOwned,
+  if (!W || travelFailed) return;
+  // Player fields live on the base key so inventory, money, and health
+  // carry BOTH ways between dimensions. World state (placed pieces,
+  // crops, loot chests) is per-dimension: the normal world's state stays
+  // on the base key, The Flipped's on a separate key — building in one
+  // world never wipes the other. Old single-key saves load as the
+  // normal world's state, unchanged.
+  const player = { inv: P.inv, hotbar: P.hotbar, perm: P.perm, money: P.money, hp: P.hp, hunger: P.hunger, hasBackpack: P.hasBackpack, landOwned: P.landOwned };
+  const worldState = {
     placed: placed.map((p) => ({ itemId: p.itemId, x: p.x, z: p.z, y: p.y, rotY: p.rotY || 0, color: p.color, contents: p.contents, hp: p.hp })),
     crops: crops.filter((c) => c.seed).map((c) => ({ x: c.x, z: c.z, seed: c.seed, planted: c.planted })),
     // Loot chest states, matched back by position on load (chest
     // placement is deterministic per seed, so positions are stable).
     chests: world ? world.chests.map((c) => ({ x: c.x, z: c.z, opened: !!c.opened, contents: c.contents || null })) : [],
-  });
+  };
+  if ((W.dim || 'normal') === 'normal') {
+    save('somewhere_save_' + W.id, { ...player, ...worldState });
+  } else {
+    save('somewhere_save_' + W.id, { ...(load('somewhere_save_' + W.id, null) || {}), ...player });
+    save('somewhere_save_' + W.id + '_flipped', { ...player, ...worldState });
+  }
 }
 function loadSave() {
   const s = load('somewhere_save_' + W.id, null);
@@ -2644,14 +2979,17 @@ function loadSave() {
   P.perm = s.perm || [null, null, null];
   P.money = s.money ?? 50; P.hp = s.hp ?? 100; P.hunger = s.hunger ?? 100;
   P.hasBackpack = !!s.hasBackpack; P.landOwned = !!s.landOwned;
-  for (const p of s.placed || []) {
+  // Dimension world state: normal reads the base save; The Flipped
+  // reads its own key, and a missing one means a fresh Flipped world.
+  const ws = (W.dim || 'normal') === 'normal' ? s : load('somewhere_save_' + W.id + '_flipped', null);
+  for (const p of (ws?.placed || [])) {
     const mesh = buildPieceMesh(p.itemId, p.color);
     mesh.position.set(p.x, p.y, p.z);
     mesh.rotation.y = p.rotY || 0; // saves from before facing shipped default to 0, as before
     scene.add(mesh);
     placed.push({ ...p, mesh, contents: p.contents || (p.itemId === 'chest' ? [] : undefined) });
   }
-  for (const c of s.crops || []) {
+  for (const c of (ws?.crops || [])) {
     const y = groundY(c.x, c.z);
     const soil = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.12, 0.95),
       new THREE.MeshStandardMaterial({ color: 0x4a3220, roughness: 1 }));
@@ -2660,7 +2998,7 @@ function loadSave() {
   }
   // Restore loot chest contents/open state (unopened chests keep
   // their loot table and generate contents on first open).
-  for (const sc of s.chests || []) {
+  for (const sc of (ws?.chests || [])) {
     const c = world.chests.find((x) => x.x === sc.x && x.z === sc.z);
     if (!c) continue;
     c.opened = !!sc.opened;

@@ -358,6 +358,12 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
 #game-screen .build-bar button.sel { background: #d7d7de; color: #141416; border-color: transparent; }
 #game-screen .shop-panel { background: rgba(32,32,36,.94); border: 1px solid rgba(255,255,255,.12); border-radius: 20px; clip-path: none; filter: none; box-shadow: 0 24px 64px rgba(0,0,0,.5); backdrop-filter: blur(16px); }
 #game-screen .shop-panel h3 { color: #fff; }
+#game-screen .phone-panel { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 30; background: #14141c; border: 3px solid #2a2a3a; border-radius: 28px; padding: 14px; box-shadow: 0 24px 64px rgba(0,0,0,.6); }
+#game-screen .phone-panel .phone-screen { background: rgba(255,255,255,.06); border-radius: 18px; padding: 20px; width: 240px; text-align: center; }
+#game-screen .phone-panel h3 { color: #fff; margin-bottom: 8px; }
+#game-screen .phone-panel .btn { width: 100%; margin-top: 10px; background: linear-gradient(180deg, #5c5c64, #3a3a40); border: 1px solid rgba(255,255,255,.18); border-radius: 12px; color: #fff; padding: 8px; }
+#game-screen .phone-panel .btn:disabled { opacity: .45; }
+#game-screen .phone-panel .fine { color: rgba(255,255,255,.65); font-size: 13px; }
 
 /* ---------- Fix batch 2 ---------- */
 /* Lobby character ALWAYS dead-center (Fortnite-style): the hero is a

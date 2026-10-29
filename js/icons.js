@@ -7,6 +7,7 @@ const G = (inner) => `<svg class="di" viewBox="0 0 48 48" xmlns="http://www.w3.o
 
 const axe = (head) => G(`<g transform="rotate(28 24 24)"><rect x="21" y="8" width="6" height="32" rx="2" fill="#8a5a2b"/><path d="M27 10 L40 14 L40 26 L27 24 Z" fill="${head}"/><rect x="21" y="8" width="6" height="32" rx="2"/></g>`);
 const pick = (head) => G(`<g transform="rotate(28 24 24)"><rect x="21" y="8" width="6" height="32" rx="2" fill="#8a5a2b"/><path d="M24 8 L10 14 L12 19 L24 14 Z" fill="${head}"/><path d="M24 8 L38 14 L36 19 L24 14 Z" fill="${head}"/></g>`);
+const sword = (blade) => G(`<g transform="rotate(28 24 24)"><rect x="21" y="30" width="6" height="12" rx="2" fill="#1a1a24"/><rect x="14" y="28" width="20" height="4" rx="2" fill="#3a3a4a"/><path d="M21 28 L24 6 L27 28 Z" fill="${blade}"/></g>`);
 const sack = (body, knot) => G(`<path d="M14 18 Q14 12 24 12 Q34 12 34 18 L36 34 Q36 40 30 40 L18 40 Q12 40 12 34 Z" fill="${body}"/><path d="M20 12 Q24 7 28 12" fill="${knot}"/><line x1="16" y1="26" x2="32" y2="26"/><line x1="17" y1="32" x2="31" y2="32"/>`);
 const wallBase = (inner) => G(`<rect x="7" y="8" width="34" height="32" rx="2" fill="#e8ddc8"/>${inner}`);
 
@@ -50,6 +51,12 @@ export const ICONS = {
   jerrycan: G(`<rect x="11" y="12" width="26" height="28" rx="3" fill="#c23b3b"/><path d="M18 12 Q18 7 24 7 Q30 7 30 12" fill="none"/><path d="M17 18 L31 34 M31 18 L17 34" stroke="#8e2a2a"/><rect x="35" y="14" width="5" height="8" rx="1" fill="#8e2a2a"/>`),
   car_key: G(`<circle cx="17" cy="17" r="8" fill="#f5c542"/><circle cx="17" cy="17" r="3.5" fill="#e8ddc8"/><line x1="23" y1="23" x2="40" y2="40"/><line x1="34" y1="34" x2="34" y2="40"/><line x1="39" y1="39" x2="39" y2="43" transform="translate(0 -2)"/>`),
   house_key: G(`<circle cx="16" cy="16" r="9" fill="#d8b25a"/><circle cx="16" cy="16" r="4" fill="#e8ddc8"/><line x1="22" y1="22" x2="40" y2="40"/><path d="M32 32 L32 38 M38 38 L38 42" stroke="#a8823a"/>`),
+  phone: G(`<rect x="15" y="7" width="18" height="34" rx="4" fill="#1a1a24"/><rect x="18" y="11" width="12" height="20" rx="1" fill="#2a2a3a"/><circle cx="24" cy="35" r="2.5" fill="#7a5cff"/>`),
+  shadow_sword: G(`<g transform="rotate(28 24 24)"><rect x="21" y="30" width="6" height="12" rx="2" fill="#1a1a24"/><rect x="14" y="28" width="20" height="4" rx="2" fill="#3a3a4a"/><path d="M21 28 L24 6 L27 28 Z" fill="#232338"/><circle cx="24" cy="28" r="3" fill="#b07aff"/></g>`),
+  sword_wood: sword('#8a5a2b'),
+  sword_stone: sword('#9aa0a8'),
+  sword_iron: sword('#c8ccd2'),
+  portal_command: G(`<rect x="9" y="12" width="30" height="26" rx="3" fill="#3a3a4a"/><rect x="15" y="18" width="10" height="10" rx="2" fill="#7a5cff"/><g fill="#b07aff"><circle cx="30" cy="20" r="1.6"/><circle cx="34" cy="20" r="1.6"/><circle cx="30" cy="24" r="1.6"/><circle cx="34" cy="24" r="1.6"/></g><circle cx="36" cy="34" r="1.8" fill="#b07aff"/>`),
 };
 
 // Small UI pictograms (not items): world/server cards in the lobby.

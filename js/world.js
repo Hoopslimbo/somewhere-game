@@ -520,6 +520,12 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   // ~380 units, so the smaller extent is invisible — but the build
   // runs ~4x faster, which is the whole lobby wait on a slow machine.
   const light = !!opts.light;
+  // Mirror build (The Flipped): the SAME generation runs unchanged,
+  // but every placement lands at -x, and the terrain mesh itself is
+  // mirrored after the color pass. Mirroring at placement keeps rand()
+  // consumption identical, so the mirrored world is a true replica.
+  const mirror = !!opts.mirror;
+  const mx = (x) => mirror ? -x : x;
   const SIZE = light ? 900 : 1862, SEG = light ? 480 : 979;
   const TREE_N = light ? 1550 : 6600, ROCK_N = light ? 490 : 2100,
     BUSH_N = light ? 1260 : 5400, BUSH_CAP = light ? 532 : 2280,
@@ -608,6 +614,18 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     colors[i * 3 + 2] = Math.min(1, Math.max(0, col.b + j));
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  if (mirror) {
+    // Mirror the terrain in X: negate every vertex, flip the winding
+    // (otherwise faces point down), and recompute normals. Colors ride
+    // along with their vertices, which is exactly right — the mirrored
+    // terrain's color at (-x, z) is the original color at (x, z).
+    for (let i = 0; i < pos.count; i++) pos.setX(i, -pos.getX(i));
+    const idx = geo.index.array;
+    for (let i = 0; i < idx.length; i += 3) { const t = idx[i + 1]; idx[i + 1] = idx[i + 2]; idx[i + 2] = t; }
+    geo.index.needsUpdate = true;
+    geo.computeVertexNormals();
+    geo.computeBoundingSphere();
+  }
   const terrain = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: 0.96, map: groundTexture(),
   }));
@@ -663,7 +681,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     let s = 0.8 + rand() * 0.7;
     if (b === 'tallforest') s *= 1.35;
     group.scale.setScalar(s);
-    group.position.set(x, h - 0.1, z);
+    group.position.set(mx(x), h - 0.1, z);
     group.rotation.y = rand() * Math.PI * 2;
     // NOT scene.add(group): the group stays a detached proxy (see the
     // instancing note above) and its parts go into treeBuckets.
@@ -671,7 +689,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     // (per-part {mesh, index} into the instanced buckets); every
     // other field is unchanged, so findTarget/collideWorld work
     // untouched.
-    const tree = { group, x, z, h, hp: 3, kind: form, trunkH: trunkH * s, radius: 0.6 * s, scale: s, parts: [] };
+    const tree = { group, x: mx(x), z, h, hp: 3, kind: form, trunkH: trunkH * s, radius: 0.6 * s, scale: s, parts: [] };
     collectTreeParts(group, treeBuckets, tree);
     trees.push(tree);
   }
@@ -697,14 +715,14 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     const iron = biomeAt(x, z, seed) === 'caved' ? rand() < 0.45 : rand() < 0.12;
     const s = 0.5 + rand() * 0.9;
     const rock = new THREE.Mesh(jitteredRockGeo(s, rand), iron ? MATS.iron : pick(MATS.stone, rand));
-    rock.position.set(x, h + s * 0.4, z); rock.castShadow = true;
+    rock.position.set(mx(x), h + s * 0.4, z); rock.castShadow = true;
     rock.rotation.set(rand() * 0.6, rand() * 3, rand() * 0.6);
     scene.add(rock);
     if (iron) {
       const fleck = new THREE.Mesh(new THREE.BoxGeometry(s * 0.5, s * 0.3, s * 0.2), MATS.rust);
-      fleck.position.set(x, h + s * 0.9, z + s * 0.4); scene.add(fleck);
+      fleck.position.set(mx(x), h + s * 0.9, z + s * 0.4); scene.add(fleck);
     }
-    rocks.push({ mesh: rock, x, z, h, hp: iron ? 4 : 3, iron, radius: s });
+    rocks.push({ mesh: rock, x: mx(x), z, h, hp: iron ? 4 : 3, iron, radius: s });
   }
   // Ground stones (pickup fallback for chopping)
   // Left individual like rocks: same per-vertex jitter argument, and
@@ -717,8 +735,8 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     if (h < 0.8) continue;
     const s = 0.20 + rand() * 0.16;
     const st = new THREE.Mesh(jitteredRockGeo(s, rand), pick(MATS.stone, rand));
-    st.position.set(x, h + 0.15, z); st.castShadow = true; scene.add(st);
-    groundStones.push({ mesh: st, x, z, h });
+    st.position.set(mx(x), h + 0.15, z); st.castShadow = true; scene.add(st);
+    groundStones.push({ mesh: st, x: mx(x), z, h });
     if ((i + 1) % 200 === 0) await yieldToBrowser();
   }
   await yieldToBrowser();
@@ -788,9 +806,9 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
       crate.position.set(0.95, 0.28, 0.3); crate.rotation.y = rand() * 1.2; crate.castShadow = true; grp.add(crate);
     }
     grp.scale.setScalar(0.9 + rand() * 0.3);
-    grp.position.set(x, h, z); grp.rotation.y = rand() * Math.PI * 2;
+    grp.position.set(mx(x), h, z); grp.rotation.y = rand() * Math.PI * 2;
     scene.add(grp);
-    chests.push({ group: grp, x, z, h, loot: LOOT[i % LOOT.length], opened: false });
+    chests.push({ group: grp, x: mx(x), z, h, loot: LOOT[i % LOOT.length], opened: false });
   }
   await yieldToBrowser();
   // ---- Bushes, grass tufts, flowers (instanced — cheap, varied) ----
@@ -811,7 +829,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     if (h < 0.8) continue;
     const b = biomeAt(x, z, seed);
     if (b === 'desert' || b === 'snowy') continue;
-    dummy.position.set(x, h + 0.2, z);
+    dummy.position.set(mx(x), h + 0.2, z);
     dummy.rotation.set(0, rand() * Math.PI * 2, 0);
     dummy.scale.set(0.45 + rand() * 0.55, 0.35 + rand() * 0.3, 0.45 + rand() * 0.55);
     dummy.updateMatrix();
@@ -845,7 +863,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     if (h < 0.8) continue;
     const b = biomeAt(x, z, seed);
     if (b === 'snowy' || b === 'caved') continue;
-    dummy.position.set(x, h + 0.12, z);
+    dummy.position.set(mx(x), h + 0.12, z);
     dummy.rotation.set((rand() - 0.5) * 0.6, rand() * Math.PI * 2, (rand() - 0.5) * 0.6);
     const gs = 0.7 + rand() * 0.6;
     dummy.scale.set(gs, gs, gs * 0.45); // flattened: a blade, not a cone tree
@@ -875,7 +893,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
     if (biomeAt(x, z, seed) !== 'plains') continue;
-    dummy.position.set(x, h + 0.32, z);
+    dummy.position.set(mx(x), h + 0.32, z);
     dummy.rotation.set(0, 0, 0); dummy.scale.setScalar(0.8 + rand() * 0.6);
     dummy.updateMatrix();
     flowers.setMatrixAt(fi, dummy.matrix);
@@ -908,7 +926,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
     const b = biomeAt(x, z, seed);
-    dummy.position.set(x, h + 0.05, z);
+    dummy.position.set(mx(x), h + 0.05, z);
     dummy.rotation.set(rand() * 0.8, rand() * Math.PI * 2, rand() * 0.8);
     const ps = 0.06 + rand() * 0.16;
     dummy.scale.set(ps, ps * (0.6 + rand() * 0.4), ps);
@@ -946,7 +964,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     const discCol = new THREE.Color(0x6b4e2e);
     discCol.offsetHSL(0, 0, (rand() - 0.5) * 0.08);
     if (b === 'desert') discCol.set(0xc99a5e);
-    dummy.position.set(x, h + 0.05, z);
+    dummy.position.set(mx(x), h + 0.05, z);
     dummy.rotation.set(-Math.PI / 2, 0, rand() * Math.PI);
     dummy.scale.set(s, s, s);
     dummy.updateMatrix();
@@ -984,7 +1002,10 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   }
   const brace = new THREE.Mesh(new THREE.BoxGeometry(1.75, 0.10, 0.10), goldDark);
   brace.position.set(0, 0.22, 0); bench.add(brace);
-  bench.position.set(spawn.x - 4, heightAt(spawn.x - 4, spawn.z + 3, seed), spawn.z + 3);
+  // Mirror: the bench's height comes from the UNmirrored coordinate
+  // (mirrored terrain height at -x equals original height at x), while
+  // its x lands mirrored. Spawn itself is negated just below.
+  bench.position.set(mx(spawn.x - 4), heightAt(spawn.x - 4, spawn.z + 3, seed), spawn.z + 3);
   // Gold-trimmed tool board behind the gold bench (decorative, like the
   // workbench pegboard — keeps the gold bench distinct and unmistakable)
   const gBoard = new THREE.Mesh(new THREE.BoxGeometry(2.8, 1.5, 0.08), MATS.gold);
@@ -1007,8 +1028,14 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   gSaw.position.set(0.95, 1.60, -0.54); bench.add(gSaw);
   scene.add(bench);
   interactables.push({ type: 'goldbench', x: bench.position.x, z: bench.position.z, radius: 2.5, mesh: bench });
-  lantern(scene, spawn.x - 6, spawn.z + 4, seed);
-  clutterAround(scene, bench.position.x, bench.position.z, seed, rand, 2);
+  // Mirror: the lantern + clutter read terrain height at their own
+  // coordinates, which would float or sink on mirrored ground, so the
+  // Flipped skips those decorations — the gold bench marks spawn.
+  if (!mirror) {
+    lantern(scene, spawn.x - 6, spawn.z + 4, seed);
+    clutterAround(scene, bench.position.x, bench.position.z, seed, rand, 2);
+  }
+  if (mirror) spawn.x = -spawn.x;
 
   // Fresh worlds start CLEAN: terrain, trees, rocks, loot chests, and
   // the gold spawn bench only. No pre-stocked NPC shop, car shop, land
