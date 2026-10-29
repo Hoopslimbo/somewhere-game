@@ -583,6 +583,12 @@ function renderServers() {
     // default them to the current user.
     const mine = !s.owner || (S.session && s.owner === S.session.username);
     const members = s.members || (1 + (s.invited ? s.invited.length : 0));
+    // Online now: you, plus invited friends flagged online. The total
+    // is the whole server (owner + invited) — the stored count can lag
+    // behind invites, so take the larger of the two.
+    const invited = s.invited || [];
+    const total = Math.max(members, 1 + invited.length);
+    const online = 1 + invited.filter((n) => (S.friends || []).some((f) => f.name === n && f.online)).length;
     const menuItems = [];
     if (mine) {
       menuItems.push(
@@ -613,9 +619,9 @@ function renderServers() {
       title: s.name, icon: uiIcon('server'), artSeed: s.seed || 777,
       selected: S.selectedServer === s.id,
       lines: [
-        `Private server · Up to 20 members`,
-        `${members} member${members === 1 ? '' : 's'} · Freezes when empty`,
-        s.invited && s.invited.length ? `Invited: ${s.invited.join(', ')}` : 'Hop in anytime',
+        `Private server`,
+        `${online} online of ${total} invited`,
+        ...(invited.length ? [`Invited: ${invited.join(', ')}`] : []),
       ],
       onSelect: () => selectServer(s),
       menuItems,

@@ -72,7 +72,7 @@ function clearChat() {
 }
 
 // ---------- Inventory ----------
-function invCap() { return P.hasBackpack ? 40 : 10; }
+function invCap() { return P.hasBackpack ? 40 : 13; }
 function countOf(id) {
   let n = 0;
   for (const s of [...P.inv, ...P.hotbar]) if (s && s.id === id) n += s.n;
@@ -599,16 +599,21 @@ async function backToLobby() {
   const fill = $('loading-fill');
   if (fill) fill.style.width = '0%';
   $('loading-screen').classList.remove('hidden');
+  // Minimum time on screen: the lobby is usually already ready when
+  // quitting (its panorama built long ago), so awaiting lobbyReady
+  // alone resolves in a microtask and no paint ever happens between
+  // the show above and the hide in the finally — the overlay never
+  // actually appeared. Hold it for at least a beat so leaving a world
+  // always shows a loading screen.
+  const minShow = new Promise((r) => setTimeout(r, 800));
   try {
     if (S.showLobby) S.showLobby();
     else $('lobby-screen').classList.remove('hidden');
-    // Awaiting an already-resolved promise yields only a microtask,
-    // so when the lobby is already ready no paint happens between the
-    // show above and the hide in the finally — no visible flash. When
-    // the panorama is still building, this waits for its first frame.
-    // lobbyReady is also resolved (not left pending) if the panorama
-    // build failed, so the overlay can never stick on that path either.
+    // When the panorama is still building, this waits for its first
+    // frame. lobbyReady is also resolved (not left pending) if the
+    // panorama build failed, so the overlay can never stick either.
     if (S.lobbyReady) await S.lobbyReady;
+    await minShow;
   } finally {
     $('loading-screen').classList.add('hidden');
   }
@@ -1110,29 +1115,6 @@ function digGround(cell, toolSlot) {
   damageTool(toolSlot);
   updateHUD();
 }
-function targetLabel(t) {
-  // Unmistakable affordance: the verb AND the button, per target.
-  // LEFT = attack/chop/mine, RIGHT = interact — never just "click".
-  switch (t.kind) {
-    case 'tree': return 'Tree — Hold left click to chop';
-    case 'rock': return t.ref.iron ? 'Iron ore — Hold left click to mine (needs pickaxe)' : 'Stone — Hold left click to mine (needs pickaxe)';
-    case 'groundstone': return 'Stone — Right click to pick up';
-    case 'drop': return `${ITEMS[t.ref.id]?.name || 'Item'} — Right click to pick up`;
-    case 'chest': return (t.ref.contents && t.ref.contents.length === 0) ? 'Empty loot chest — Right click to open' : 'Loot chest — Right click to open';
-    case 'goldbench': return 'Gold bench — Right click to craft (unbreakable)';
-    case 'shop': return 'Shop — Right click to buy & sell';
-    case 'carshop': return 'Car shop — Right click to repair or trade in';
-    case 'landoffice': return P.landOwned ? 'Your land office' : 'Land office — Right click to buy land (100 coins)';
-    case 'placed': {
-      const use = { vehicle_machine: 'Vehicle machine — Right click to build a car', gas_pump: 'Gas pump — Right click to refuel', chest: 'Storage chest — Right click to open', workbench: 'Workbench — Right click to craft' };
-      return use[t.ref.itemId] || `${ITEMS[t.ref.itemId]?.name || 'Structure'} — Left click to smash`;
-    }
-    case 'car': return t.ref.locked ? 'Locked car' : 'Car — Right click to drive';
-    case 'ground': return `${digYieldLabel(digYield(t.x, t.z))} — Hold left click to dig`;
-    case 'crop': return t.ref.stage >= 3 ? `${t.ref.seed === 'seed_wheat' ? 'Wheat' : 'Carrot'} ready — Left click to harvest` : 'Growing crop';
-    default: return '';
-  }
-}
 function targetBasePos(t) {
   // Ground position + radius for the highlight ring.
   switch (t.kind) {
@@ -1158,8 +1140,10 @@ function updateTargetPrompt() {
   target = findTarget();
   const el = $('interact-prompt');
   if (target) {
-    el.textContent = targetLabel(target);
-    el.classList.remove('hidden');
+    // No text prompt: Liam asked to remove the little hint texts for
+    // everything. The crosshair glow + ground ring still mark the
+    // target; only the words are gone.
+    el.classList.add('hidden');
     $('crosshair').classList.add('target'); // crosshair glows only on a valid target
     // Highlight ring on the ground around the target, so it is
     // unmistakable what you are aiming at.
@@ -2312,7 +2296,7 @@ function openChestPanel(title, chest, source) {
       dragDroppedAt = performance.now();
       render(); updateHUD(); saveGame();
     };
-    d.ondragend = () => { dragSrc = null; dragDroppedAt = performance.now(); };
+    d.ondragend = () => { dragSrc = null; dragDroppedAt = performance.now(); d.classList.remove('dragging'); };
     return d;
   };
   const render = () => {
@@ -2350,10 +2334,15 @@ function toggleInventory(force, opened) {
     // A mouse menu: cursor out, look-around stopped.
     invOpened = opened || { by: 'mouse', key: null };
     document.exitPointerLock?.();
+    // Craft mode is re-added by openCraft after this call; clearing it
+    // here means a stale mode (quit, chest UI, any path that hid the
+    // panel directly) can never leak into a plain inventory view.
+    panel.classList.remove('craft-mode');
     renderInvGrid();
   } else {
     invOpened = null;
     craftOpened = null;
+    panel.classList.remove('craft-mode');
   }
 }
 // Drag-to-reorder state: which panel slot a drag started from, and a
@@ -2384,6 +2373,19 @@ function renderInvGrid() {
       dragSrc = { where: kind, idx };
       try { e.dataTransfer.setData('text/plain', kind + ':' + idx); } catch { /* ignore */ }
       e.dataTransfer.effectAllowed = 'move';
+      // Lightweight drag image: just the item icon, no slot chrome,
+      // shadows, or blur — the full slot snapshot stuttered on weak
+      // hardware and looked muddy mid-drag. The source slot dims so
+      // it's clear the item is picked up.
+      if (slot) {
+        const ghost = document.createElement('div');
+        ghost.innerHTML = itemIcon(slot.id);
+        ghost.style.cssText = 'position:fixed;top:-100px;left:-100px;width:56px;height:56px;display:flex;align-items:center;justify-content:center;pointer-events:none;';
+        document.body.appendChild(ghost);
+        try { e.dataTransfer.setDragImage(ghost, 28, 28); } catch { /* ignore */ }
+        setTimeout(() => ghost.remove(), 0);
+      }
+      d.classList.add('dragging');
     };
     d.ondragover = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; d.classList.add('drag-over'); };
     d.ondragleave = () => d.classList.remove('drag-over');
@@ -2401,7 +2403,7 @@ function renderInvGrid() {
       dragDroppedAt = performance.now();
       renderInvGrid(); updateHUD(); saveGame();
     };
-    d.ondragend = () => { dragSrc = null; dragDroppedAt = performance.now(); };
+    d.ondragend = () => { dragSrc = null; dragDroppedAt = performance.now(); d.classList.remove('dragging'); };
     d.onclick = () => {
       if (performance.now() - dragDroppedAt < 200) return; // just dropped — not a click
       if (kind === 'hot') { selSlot = idx; }
@@ -2421,13 +2423,19 @@ function renderInvGrid() {
   for (let i = 0; i < invCap(); i++) grid.appendChild(mkSlot(P.inv[i] || null, i, 'inv'));
   // Permanent slots are NOT duplicated here — they live in the top hotbar row (8, 9, 0) only.
   const titleEl = $('inv-title');
-  if (titleEl) titleEl.textContent = P.hasBackpack ? 'Backpack' : 'Inventory';
+  // Title follows the view: craft mode keeps its Workbench / Quick
+  // Craft title even when updateHUD re-renders the grid underneath.
+  if (titleEl) {
+    titleEl.textContent = $('inv-panel').classList.contains('craft-mode')
+      ? (craftOpened && craftOpened.quick ? 'Quick Craft' : 'Workbench')
+      : (P.hasBackpack ? 'Backpack' : 'Inventory');
+  }
   const note = document.createElement('p');
   note.className = 'fine';
   note.style.gridColumn = '1 / -1';
   note.textContent = P.hasBackpack
     ? `Backpack: 40 normal slots. Drag items to rearrange them. Permanent slots (car key, house key) live in the top bar — press 8, 9, 0 to select them.`
-    : `10 normal slots — craft a Backpack (4 leather) to expand to 40. Drag items to rearrange them. Permanent slots (car key, house key) live in the top bar — press 8, 9, 0 to select them.`;
+    : `13 normal slots — craft a Backpack (4 leather) to expand to 40. Drag items to rearrange them. Permanent slots (car key, house key) live in the top bar — press 8, 9, 0 to select them.`;
   grid.appendChild(note);
 }
 $('inv-close').onclick = () => { toggleInventory(false); requestGameLock(); };
@@ -2449,6 +2457,10 @@ function openCraft(quick, opened) {
   // Mouse-opened craft ignores the Q key; keyboard-opened craft
   // toggles shut on Q. A button click is a mouse open.
   toggleInventory(true, opened || invOpened || { by: 'mouse', key: null });
+  // Craft-only view: the inventory grid (and its Quick craft button)
+  // leave the box, so the craft list gets the full panel height.
+  $('inv-panel').classList.add('craft-mode');
+  $('inv-title').textContent = quick ? 'Quick Craft' : 'Workbench';
   craftOpened = { ...(opened || invOpened || { by: 'mouse', key: null }), quick: !!quick };
   const list = $('craft-list');
   list.innerHTML = `<h4>${quick ? 'Quick Craft (Anywhere)' : 'Workbench — Same Stuff at Every Workbench'}</h4>`;
@@ -2512,6 +2524,7 @@ function closePanels() {
   stopHoldAction();
   closeOpenChestLid();
   $('inv-panel').classList.add('hidden');
+  $('inv-panel').classList.remove('craft-mode');
   $('shop-panel').classList.add('hidden');
   $('help-panel').classList.add('hidden');
   $('craft-list').innerHTML = '';
@@ -2556,7 +2569,10 @@ function updateHUD() {
     }
   });
   updateHUDDynamic();
-  if (!$('inv-panel').classList.contains('hidden')) renderInvGrid();
+  // Never rebuild the grid mid-drag: replacing the slot nodes under a
+  // drag kills the drag image and flickers the panel. The drop handler
+  // rebuilds right after the drop lands.
+  if (!dragSrc && !$('inv-panel').classList.contains('hidden')) renderInvGrid();
   if (craftOpened && !$('inv-panel').classList.contains('hidden')) renderCraftRows(craftOpened.quick);
   syncBuildSel();
 }
