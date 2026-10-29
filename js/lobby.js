@@ -637,6 +637,21 @@ $('btn-new-world').onclick = () => {
 };
 $('btn-new-server').onclick = () => openWorldDialog(true);
 let dialogIsServer = false;
+function randomSeed() { return Math.floor(Math.random() * 2147483647); }
+// Seed from the create dialog: blank = roll a fresh random one; a plain
+// number is used as-is; any other text (words, etc.) is hashed to a
+// full-range number, so anything typed works as a seed.
+function parseSeed(text) {
+  const t = (text || '').trim();
+  if (!t) return randomSeed();
+  if (/^-?\d+$/.test(t)) {
+    const n = parseInt(t, 10);
+    return ((n % 2147483647) + 2147483647) % 2147483647;
+  }
+  let h = 2166136261;
+  for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0) % 2147483647;
+}
 function openWorldDialog(isServer) {
   dialogIsServer = isServer;
   $('world-dialog-title').textContent = isServer ? 'Create a Server' : 'Create a World';
@@ -665,6 +680,8 @@ function openWorldDialog(isServer) {
   $('world-name').value = '';
   $('world-keepinv').checked = false;
   $('world-friendly').checked = true;
+  // Show the seed that will be used, so it can be kept or replaced.
+  $('world-seed').value = String(randomSeed());
 
   $('world-dialog').classList.remove('hidden');
   $('world-name').focus();
@@ -673,10 +690,11 @@ $('world-cancel').onclick = () => $('world-dialog').classList.add('hidden');
 $('world-create').onclick = () => {
   const name = $('world-name').value.trim() || (dialogIsServer ? 'New server' : 'New world');
   if (hasBadWord(name)) { alert('That name contains a blocked word.'); return; }
-  // Full-range random seed per world/server: same-length names (or any
-  // two worlds) must never silently share a seed — that was one way
-  // islands came out identical.
-  const seed = Math.floor(Math.random() * 2147483647);
+  // Seed comes from the dialog: the prefilled roll, a typed number, a
+  // hashed word, or a fresh roll when left blank. Same-length names
+  // (or any two worlds) must never silently share a seed — that was
+  // one way islands came out identical.
+  const seed = parseSeed($('world-seed').value);
   if (dialogIsServer) {
     const invited = [...document.querySelectorAll('#server-invite-list input:checked')].map((cb) => cb.value);
     S.servers.push({ id: uid(), name, seed, members: 1, invited, owner: S.session ? S.session.username : '', keepInv: false, friendly: true });
