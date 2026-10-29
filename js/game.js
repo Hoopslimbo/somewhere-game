@@ -3,6 +3,7 @@ import { buildCharacter } from './character.js';
 import { buildWorld, heightAt, biomeAt, makeSkyDome, hideTreeInstances, refreshTreeInstances } from './world.js';
 import { ITEMS, RECIPES, QUICK_RECIPES, cleanText, load, save } from './data.js';
 import { itemIcon } from './icons.js';
+import { woodTex, brickTintedTex, shingleTintedTex, steelTex, goldLightTex, panelTex, pumpPanelTex, sidingTex, shadowTex, frostTex, soilTex, swirlTex, flakeTex, treadTex, appleTex, carrotTex, wheatTex, leatherTex, weaveTex, phoneTex, woodLightTex, stoneLightTex, leafLightTex } from './textures.js';
 
 const $ = (id) => document.getElementById(id);
 const S = window.Somewhere;
@@ -29,7 +30,7 @@ let invOpened = null, buildOpened = null, helpOpened = null, craftOpened = null,
 let targetRing = null;
 // ---------- The Flipped + phone (dimension system) ----------
 let darkened = []; // active Darkened mobs (Flipped only)
-let portal = null; // open portal {group, x, z, targetDim, machine, armedAt, openPos}
+let portal = null; // open portal {group, x, z, targetDim, machine, armedAt, prevD}
 let travelFailed = false; // set if a dimension rebuild throws: saves stop so the pre-switch disk save survives until a refresh
 let phoneOpenedAt = 0; // guards the right-click that opens the phone menu from closing it
 let darkenedTimer = 90; // seconds until the next Darkened spawn check (Flipped only)
@@ -657,9 +658,9 @@ function openPortalKeypad(machine, source) {
   const panel = $('shop-panel');
   const dim = W?.dim || 'normal';
   panel.classList.remove('hidden');
-  panel.innerHTML = `<h3>Portal command center</h3><p class="fine">Select a dimension. A portal opens near this machine — walk into it to travel. It closes behind you.</p>
-    <div class="craft-row"><span>Normal World${dim === 'normal' ? ' (you are here)' : ''}</span><button class="btn small" ${dim === 'normal' ? 'disabled' : ''} data-dim="normal">Open portal</button></div>
-    <div class="craft-row"><span>The Flipped${dim === 'flipped' ? ' (you are here)' : ''}</span><button class="btn small" ${dim === 'flipped' ? 'disabled' : ''} data-dim="flipped">Open portal</button></div>
+  panel.innerHTML = `<h3>PORTAL CONTROL</h3><p class="fine">Select a dimension. A portal opens inside the claw frame — walk into it to travel. It closes behind you.</p>
+    <div class="portal-dim${dim === 'normal' ? ' is-here' : ''}"><div><b>Normal World</b><span class="portal-flavor">Flourishing life, just as you left it.</span>${dim === 'normal' ? '<span class="portal-here">You are here</span>' : ''}</div><button class="btn small" ${dim === 'normal' ? 'disabled' : ''} data-dim="normal">Open portal</button></div>
+    <div class="portal-dim${dim === 'flipped' ? ' is-here' : ''}"><div><b>The Flipped</b><span class="portal-flavor">Fire and darkness. The Darkened hunt there.</span>${dim === 'flipped' ? '<span class="portal-here">You are here</span>' : ''}</div><button class="btn small" ${dim === 'flipped' ? 'disabled' : ''} data-dim="flipped">Open portal</button></div>
     <button class="btn small ghost panel-close">Close</button>`;
   panel.querySelectorAll('[data-dim]').forEach((b) => b.onclick = () => {
     panel.classList.add('hidden');
@@ -668,10 +669,12 @@ function openPortalKeypad(machine, source) {
   });
 }
 function openPortal(targetDim, machine) {
-  // The portal opens 2 units from the machine toward the player.
-  const dx = P.pos.x - machine.x, dz = P.pos.z - machine.z;
-  const d = Math.hypot(dx, dz) || 1;
-  spawnPortal(machine.x + (dx / d) * 2, machine.z + (dz / d) * 2, targetDim, machine);
+  // REDESIGNED 2026-10-29: the portal opens INSIDE the claw frame at
+  // the machine's center (platform origin), not 2 units out from a
+  // cabinet. Walk onto the platform and into the arch to travel.
+  // Walk-in crossing logic (prevD > 1.4 into center < 1.0, armed gate)
+  // is unchanged — it now measures from the frame center.
+  spawnPortal(machine.x, machine.z, targetDim, machine);
   toast('Portal open — walk into it.');
 }
 function spawnPortal(x, z, targetDim, machine) {
@@ -681,14 +684,16 @@ function spawnPortal(x, z, targetDim, machine) {
   const ring = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.12, 10, 32), ringM);
   ring.position.y = 1.6; group.add(ring);
   const disc = new THREE.Mesh(new THREE.CircleGeometry(1.35, 32),
-    new THREE.MeshStandardMaterial({ color: 0x7a5cff, transparent: true, opacity: 0.35, emissive: 0x7a5cff, emissiveIntensity: 0.8, side: THREE.DoubleSide }));
+    new THREE.MeshStandardMaterial({ map: swirlTex(), transparent: true, opacity: 0.55, emissive: 0x7a5cff, emissiveIntensity: 0.8, side: THREE.DoubleSide }));
   disc.position.y = 1.6; group.add(disc);
   group.position.set(x, groundY(x, z), z);
   group.rotation.y = Math.atan2(P.pos.x - x, P.pos.z - z);
   scene.add(group);
-  // armedAt + openPos: walking in must be a real step, not standing
-  // still where the portal happened to open.
-  portal = { group, x, z, targetDim, machine, armedAt: performance.now() + 1200, openPos: { x: P.pos.x, z: P.pos.z } };
+  // armedAt + prevD: walking in must be a real crossing, not standing
+  // still where the portal happened to open — and not merely walking
+  // near an open portal (the reported auto-teleport bug: the old
+  // d<2.5 + moved>1 check fired for anyone passing within 2.5 units).
+  portal = { group, x, z, targetDim, machine, armedAt: performance.now() + 1200, prevD: Math.hypot(P.pos.x - x, P.pos.z - z) };
 }
 function closePortal() {
   if (portal) { scene.remove(portal.group); portal = null; }
@@ -846,10 +851,13 @@ function updateFlipped(dt) {
     }
     updateDarkened(dt);
   }
-  if (portal && performance.now() > portal.armedAt && !P.dead) {
+  if (portal && !P.dead) {
     const d = Math.hypot(P.pos.x - portal.x, P.pos.z - portal.z);
-    const moved = Math.hypot(P.pos.x - portal.openPos.x, P.pos.z - portal.openPos.z);
-    if (d < 2.5 && moved > 1.0) {
+    // Crossing check (armed-gated): travel only when the player steps
+    // from OUTSIDE the ring (prevD > 1.4) INTO the disc center (d < 1.0).
+    // Walking near an open portal, or standing in its neighborhood,
+    // never triggers travel on its own.
+    if (performance.now() > portal.armedAt && portal.prevD > 1.4 && d < 1.0) {
       const targetDim = portal.targetDim;
       if (targetDim === 'flipped') {
         W.arrival = { x: portal.x, z: portal.z };
@@ -860,6 +868,9 @@ function updateFlipped(dt) {
         : { x: W.home?.x ?? P.pos.x, z: (W.home?.z ?? P.pos.z) + 2 };
       switchDimension(targetDim, arrive);
     }
+    // Track the crossing every frame (even while arming), guarded in
+    // case travel just cleared the portal.
+    if (portal) portal.prevD = d;
   }
 }
 
@@ -1062,51 +1073,67 @@ function dropMeshFor(id) {
     const mesh = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 10), mat);
     mesh.position.set(x, y, z); mesh.scale.set(sx, sy, sz); mesh.castShadow = true; g.add(mesh); return mesh;
   };
-  const wood = M(0x8a5a2b), woodDk = M(0x5a3a1a), steel = M(0xb8bcc2, 0.35, 0.6), steelDk = M(0x6e7278, 0.45, 0.6);
+  // Shared textured materials (cached by dropTexMat): a held sword and
+  // its dropped sword now match, and drops stop minting flat materials.
+  const wood = dropTexMat(woodTex(), 0xffffff), woodDk = dropTexMat(woodTex(), 0x999999), steel = dropTexMat(steelTex(), 0xffffff, 0.35, 0.6), steelDk = dropTexMat(steelTex(), 0x777777, 0.45, 0.6);
   switch (id) {
     case 'wood': { // lying log with end rings
       cyl(0.13, 0.13, 0.55, wood, 0, 0, 0, 0, 0, Math.PI / 2, 12);
-      cyl(0.135, 0.135, 0.02, M(0xc8a87e), -0.28, 0, 0, 0, 0, Math.PI / 2, 12);
-      cyl(0.135, 0.135, 0.02, M(0xc8a87e), 0.28, 0, 0, 0, 0, Math.PI / 2, 12);
+      cyl(0.135, 0.135, 0.02, dropTexMat(woodLightTex(), 0xc8a87e), -0.28, 0, 0, 0, 0, Math.PI / 2, 12);
+      cyl(0.135, 0.135, 0.02, dropTexMat(woodLightTex(), 0xc8a87e), 0.28, 0, 0, 0, 0, Math.PI / 2, 12);
       break; }
     case 'stone': case 'ground_stone': {
-      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.22), M(0x8d8f94, 1));
+      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.22), dropTexMat(stoneLightTex(), 0x8d8f94, 1));
       rock.scale.y = 0.75; rock.castShadow = true; g.add(rock); break; }
-    case 'iron': bx(0.34, 0.12, 0.2, M(0x9aa0a8, 0.3, 0.85)); bx(0.26, 0.06, 0.16, M(0xc8ccd2, 0.25, 0.9), 0, 0.09, 0); break;
-    case 'apple': sph(0.17, M(0xe5484d, 0.5), 0, 0.02, 0); cyl(0.015, 0.02, 0.12, woodDk, 0.03, 0.2, 0, 0, 0, 0.3); bx(0.12, 0.02, 0.07, M(0x46a758, 0.7), 0.09, 0.2, 0, 0, 0, 0.4); break;
-    case 'wheat': for (const sx of [-0.07, 0, 0.07]) { cyl(0.012, 0.012, 0.42, M(0xe8c95a, 0.8), sx, 0.1, 0, 0, 0, sx * 1.2); bx(0.05, 0.16, 0.05, M(0xf5c542, 0.8), sx, 0.32, 0); } break;
-    case 'carrot': { const c = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.3, 8), M(0xe87a1a, 0.7)); c.rotation.x = Math.PI; c.position.y = -0.02; g.add(c); bx(0.03, 0.16, 0.03, M(0x46a758, 0.7), 0, 0.2, 0, 0.3, 0, 0); bx(0.03, 0.14, 0.03, M(0x46a758, 0.7), 0.04, 0.19, 0, 0.2, 0, -0.4); break; }
+    case 'iron': bx(0.34, 0.12, 0.2, dropTexMat(steelTex(), 0x9aa0a8, 0.3, 0.85)); bx(0.26, 0.06, 0.16, dropTexMat(steelTex(), 0xc8ccd2, 0.25, 0.9), 0, 0.09, 0); break;
+    case 'apple': sph(0.17, dropTexMat(appleTex(), 0xffffff, 0.5), 0, 0.02, 0); cyl(0.015, 0.02, 0.12, woodDk, 0.03, 0.2, 0, 0, 0, 0.3); bx(0.12, 0.02, 0.07, M(0x46a758, 0.7), 0.09, 0.2, 0, 0, 0, 0.4); break;
+    case 'wheat': for (const sx of [-0.07, 0, 0.07]) { cyl(0.012, 0.012, 0.42, dropTexMat(wheatTex(), 0xffffff, 0.8), sx, 0.1, 0, 0, 0, sx * 1.2); bx(0.05, 0.16, 0.05, dropTexMat(wheatTex(), 0xffffff, 0.8), sx, 0.32, 0); } break;
+    case 'carrot': { const c = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.3, 8), dropTexMat(carrotTex(), 0xffffff, 0.7)); c.rotation.x = Math.PI; c.position.y = -0.02; g.add(c); bx(0.03, 0.16, 0.03, M(0x46a758, 0.7), 0, 0.2, 0, 0.3, 0, 0); bx(0.03, 0.14, 0.03, M(0x46a758, 0.7), 0.04, 0.19, 0, 0.2, 0, -0.4); break; }
     case 'seed_wheat': case 'seed_carrot': bx(0.3, 0.22, 0.06, M(0xd8cbb8, 0.9)); bx(0.3, 0.07, 0.065, M(id === 'seed_wheat' ? 0xe8c95a : 0xe87a1a, 0.8), 0, 0.05, 0); break;
-    case 'leather': bx(0.42, 0.05, 0.3, M(0x7a4a22, 0.95)); bx(0.3, 0.055, 0.2, M(0x8a5a2b, 0.95), 0, 0.01, 0); break;
-    case 'sandbag': sph(0.22, M(0xd8c08a, 1), 0, 0, 0, 1.2, 0.6, 0.8); break;
-    case 'snowbag': sph(0.22, M(0xffffff, 0.9), 0, 0, 0, 1.2, 0.6, 0.8); break;
-    case 'dirtbag': sph(0.22, M(0x6b4a2f, 1), 0, 0, 0, 1.2, 0.6, 0.8); break;
-    case 'glass': bx(0.34, 0.3, 0.04, new THREE.MeshStandardMaterial({ color: 0x9fd4ff, transparent: true, opacity: 0.6, roughness: 0.1 })); break;
-    case 'ice': bx(0.3, 0.3, 0.3, new THREE.MeshStandardMaterial({ color: 0xbfe8ff, transparent: true, opacity: 0.85, roughness: 0.2 })); break;
-    case 'money': cyl(0.16, 0.16, 0.05, M(0xf5c542, 0.35, 0.8), 0, 0, 0, Math.PI / 2.4, 0, 0, 16); break;
+    case 'leather': bx(0.42, 0.05, 0.3, dropTexMat(leatherTex(), 0xffffff, 0.95)); bx(0.3, 0.055, 0.2, dropTexMat(leatherTex(), 0xcccccc, 0.95), 0, 0.01, 0); break;
+    case 'sandbag': sph(0.22, dropTexMat(weaveTex(), 0xd8c08a, 1), 0, 0, 0, 1.2, 0.6, 0.8); break;
+    case 'snowbag': sph(0.22, dropTexMat(weaveTex(), 0xffffff, 0.9), 0, 0, 0, 1.2, 0.6, 0.8); break;
+    case 'dirtbag': sph(0.22, dropTexMat(weaveTex(), 0x6b4a2f, 1), 0, 0, 0, 1.2, 0.6, 0.8); break;
+    case 'glass': bx(0.34, 0.3, 0.04, new THREE.MeshStandardMaterial({ map: frostTex(), transparent: true, opacity: 0.6, roughness: 0.1 })); break;
+    case 'ice': bx(0.3, 0.3, 0.3, new THREE.MeshStandardMaterial({ map: frostTex(), transparent: true, opacity: 0.85, roughness: 0.2 })); break;
+    case 'money': cyl(0.16, 0.16, 0.05, dropTexMat(goldLightTex(), 0xf5c542, 0.35, 0.8), 0, 0, 0, Math.PI / 2.4, 0, 0, 16); break;
     case 'axe_wood': case 'axe_stone': bx(0.05, 0.5, 0.05, wood, 0, 0, 0, 0, 0, 0.5); bx(0.16, 0.14, 0.04, id === 'axe_wood' ? woodDk : steelDk, 0.12, 0.22, 0, 0, 0, 0.5); break;
     case 'pickaxe_wood': case 'pickaxe': bx(0.05, 0.5, 0.05, wood, 0, 0, 0, 0, 0, 0.5); bx(0.3, 0.05, 0.05, id === 'pickaxe_wood' ? woodDk : steel, 0, 0.24, 0, 0, 0, 0.5); break;
     case 'shovel': bx(0.05, 0.5, 0.05, wood, 0, 0.05, 0, 0, 0, 0.5); bx(0.16, 0.22, 0.03, steel, 0.1, -0.22, 0, 0, 0, 0.5); break;
     case 'hoe': bx(0.05, 0.5, 0.05, wood, 0, 0, 0, 0, 0, 0.5); bx(0.2, 0.12, 0.03, steel, 0.1, 0.22, 0, 0, 0, 0.5); break;
-    case 'car_key': { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.02, 6, 14), M(0xf5c542, 0.35, 0.8)); ring.position.set(-0.1, 0.05, 0); g.add(ring); bx(0.2, 0.07, 0.04, M(0xf5c542, 0.35, 0.8), 0.08, 0.05, 0); bx(0.05, 0.05, 0.04, M(0xf5c542, 0.35, 0.8), 0.19, -0.02, 0); break; }
-    case 'house_key': { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.02, 6, 14), M(0xd8b25a, 0.4, 0.7)); ring.position.set(-0.1, 0.05, 0); g.add(ring); bx(0.2, 0.07, 0.04, M(0xd8b25a, 0.4, 0.7), 0.08, 0.05, 0); break; }
-    case 'backpack': bx(0.34, 0.4, 0.2, M(0x6e56cf, 0.85)); bx(0.36, 0.1, 0.22, M(0x5a45b0, 0.85), 0, 0.18, 0); break;
-    case 'shadow_sword': { // dark blade + purple eye at the guard
+    case 'car_key': { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.02, 6, 14), dropTexMat(goldLightTex(), 0xf5c542, 0.35, 0.8)); ring.position.set(-0.1, 0.05, 0); g.add(ring); bx(0.2, 0.07, 0.04, dropTexMat(goldLightTex(), 0xf5c542, 0.35, 0.8), 0.08, 0.05, 0); bx(0.05, 0.05, 0.04, dropTexMat(goldLightTex(), 0xf5c542, 0.35, 0.8), 0.19, -0.02, 0); break; }
+    case 'house_key': { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.02, 6, 14), dropTexMat(goldLightTex(), 0xd8b25a, 0.4, 0.7)); ring.position.set(-0.1, 0.05, 0); g.add(ring); bx(0.2, 0.07, 0.04, dropTexMat(goldLightTex(), 0xd8b25a, 0.4, 0.7), 0.08, 0.05, 0); break; }
+    case 'backpack': bx(0.34, 0.4, 0.2, dropTexMat(weaveTex(), 0x6e56cf, 0.85)); bx(0.36, 0.1, 0.22, dropTexMat(weaveTex(), 0x5a45b0, 0.85), 0, 0.18, 0); break;
+    case 'shadow_sword': { // tapered dark blade + purple eye at the guard
       bx(0.05, 0.4, 0.05, M(0x1a1a24, 0.6), 0, -0.05, 0, 0, 0, 0.5);
-      bx(0.06, 0.42, 0.03, M(0x232338, 0.35, 0.5), 0.1, 0.24, 0, 0, 0, 0.5);
+      const bl = swordBladeMesh(
+        new THREE.MeshStandardMaterial({ map: shadowTex(), roughness: 0.35, metalness: 0.5 }),
+        new THREE.MeshStandardMaterial({ color: 0xb07aff, emissive: 0x7a5cff, emissiveIntensity: 0.9 }), 0.30, 0.06);
+      bl.position.set(0, 0.10, 0); bl.rotation.z = 0.5; g.add(bl);
       sph(0.05, new THREE.MeshStandardMaterial({ color: 0xb07aff, emissive: 0xb07aff, emissiveIntensity: 1.4 }), 0.02, 0.16, 0.03); break; }
-    case 'sword_wood': case 'sword_stone': case 'sword_iron': { // grip + guard + material-tinted blade
-      const blade = id === 'sword_wood' ? 0x8a5a2b : id === 'sword_stone' ? 0x9aa0a8 : 0xc8ccd2;
+    case 'sword_wood': case 'sword_stone': case 'sword_iron': { // grip + tapered blade, matching the held look
+      const bladeMat = id === 'sword_wood'
+        ? new THREE.MeshStandardMaterial({ map: woodTex(), roughness: 0.8 })
+        : id === 'sword_stone'
+          ? new THREE.MeshStandardMaterial({ map: stoneLightTex(), color: 0x9aa0a8, roughness: 0.9 })
+          : new THREE.MeshStandardMaterial({ map: steelTex(), roughness: 0.35, metalness: 0.6 });
+      const edgeMat = id === 'sword_wood'
+        ? new THREE.MeshStandardMaterial({ color: 0xc8a87e, roughness: 0.8 })
+        : new THREE.MeshStandardMaterial({ color: 0xe8eaec, roughness: 0.25, metalness: 0.7 });
       bx(0.05, 0.4, 0.05, M(0x1a1a24, 0.6), 0, -0.05, 0, 0, 0, 0.5);
-      bx(0.06, 0.42, 0.03, M(blade, 0.35, 0.5), 0.1, 0.24, 0, 0, 0, 0.5); break; }
-    case 'jerrycan': bx(0.3, 0.36, 0.16, M(0xe5484d, 0.6)); bx(0.16, 0.05, 0.05, M(0x1a1a1a, 0.7), 0, 0.2, 0); break;
+      const bl = swordBladeMesh(bladeMat, edgeMat, 0.30, 0.06);
+      bl.position.set(0, 0.10, 0); bl.rotation.z = 0.5; g.add(bl); break; }
+    case 'jerrycan': bx(0.3, 0.36, 0.16, dropTexMat(flakeTex(), 0xffffff, 0.6)); bx(0.16, 0.05, 0.05, M(0x1a1a1a, 0.7), 0, 0.2, 0); break;
     case 'chest': bx(0.44, 0.24, 0.28, wood); bx(0.44, 0.1, 0.28, woodDk, 0, 0.16, 0); break;
     case 'workbench': bx(0.5, 0.06, 0.3, wood, 0, 0.12, 0); bx(0.05, 0.24, 0.05, woodDk, -0.2, 0, 0.1); bx(0.05, 0.24, 0.05, woodDk, 0.2, 0, 0.1); break;
     case 'wall_wood': case 'wall_brick': case 'wall_steel': case 'wall_window': case 'wall_door': case 'wall_ice':
-      bx(0.44, 0.44, 0.06, M(id === 'wall_brick' ? 0x9a5a48 : id === 'wall_steel' ? 0xd8dde2 : id === 'wall_ice' ? 0xbfe8ff : 0x8a5a2b, 0.9)); break;
+      bx(0.44, 0.44, 0.06, id === 'wall_brick' ? dropTexMat(brickTintedTex(), 0xffffff, 0.9)
+        : id === 'wall_steel' ? dropTexMat(steelTex(), 0xffffff, 0.4, 0.6)
+        : id === 'wall_ice' ? dropTexMat(frostTex(), 0xffffff, 0.9)
+        : dropTexMat(woodTex(), 0xffffff, 0.9)); break;
     case 'floor': bx(0.44, 0.05, 0.44, wood); break;
-    case 'roof': { const cone = new THREE.Mesh(new THREE.ConeGeometry(0.32, 0.2, 4), M(0xa34a3a, 0.9)); cone.rotation.y = Math.PI / 4; cone.castShadow = true; g.add(cone); break; }
-    default: bx(0.32, 0.32, 0.32, M(0xd8b25a, 0.8));
+    case 'roof': { const cone = new THREE.Mesh(new THREE.ConeGeometry(0.32, 0.2, 4), dropTexMat(shingleTintedTex(), 0xffffff, 0.9)); cone.rotation.y = Math.PI / 4; cone.castShadow = true; g.add(cone); break; }
+    default: bx(0.32, 0.32, 0.32, dropTexMat(goldLightTex(), 0xd8b25a, 0.8));
   }
   return g;
 }
@@ -1139,10 +1166,10 @@ function vmBox(g, w, h, d, m, x, y, z, rx = 0, ry = 0, rz = 0) {
 }
 function buildViewmodel() {
   viewmodels = {};
-  const woodM = new THREE.MeshStandardMaterial({ color: 0x6b4226, roughness: 0.85 });
-  const woodDark = new THREE.MeshStandardMaterial({ color: 0x4a3220, roughness: 0.9 });
-  const steelM = new THREE.MeshStandardMaterial({ color: 0xb8bcc2, roughness: 0.35, metalness: 0.6 });
-  const steelDark = new THREE.MeshStandardMaterial({ color: 0x6e7278, roughness: 0.45, metalness: 0.6 });
+  const woodM = new THREE.MeshStandardMaterial({ map: woodTex(), roughness: 0.85 });
+  const woodDark = new THREE.MeshStandardMaterial({ map: woodTex(), color: 0x999999, roughness: 0.9 });
+  const steelM = new THREE.MeshStandardMaterial({ map: steelTex(), roughness: 0.35, metalness: 0.6 });
+  const steelDark = new THREE.MeshStandardMaterial({ map: steelTex(), color: 0x777777, roughness: 0.45, metalness: 0.6 });
   // Held tools sit small in the bottom-right corner of the view — the
   // old 0.72-long models at z=-0.80 filled half the screen and read as
   // a giant gray slab. These are ~0.40 long, farther out and lower, with
@@ -1163,7 +1190,9 @@ function buildViewmodel() {
     camera.add(g);
     return g;
   };
-  const headMat = () => new THREE.MeshStandardMaterial({ color: 0xb8bcc2, roughness: 0.5, metalness: 0.15 });
+  // Brushed map under the tint: the head color still matches the
+  // inventory icon, but the steel now reads as brushed metal.
+  const headMat = () => new THREE.MeshStandardMaterial({ map: steelTex(), color: 0xb8bcc2, roughness: 0.5, metalness: 0.15 });
   const headBox = (g, w, h, d, x, y, z, rx = 0, ry = 0, rz = 0) => {
     if (!g.userData.headMat) g.userData.headMat = headMat();
     const m = vmBox(g, w, h, d, g.userData.headMat, x, y, z, rx, ry, rz);
@@ -1211,7 +1240,7 @@ function buildViewmodel() {
   // a stone pickaxe.
   const rock = mk(0.44, -0.42, -1.05, 0.15, 0.25, -0.20);
   const rockMesh = new THREE.Mesh(new THREE.DodecahedronGeometry(0.16),
-    new THREE.MeshStandardMaterial({ color: 0x6e7073, roughness: 1 }));
+    new THREE.MeshStandardMaterial({ map: stoneLightTex(), color: 0x6e7073, roughness: 1 }));
   rockMesh.scale.y = 0.78;
   rock.add(rockMesh);
   viewmodels.rock = rock;
@@ -1220,14 +1249,14 @@ function buildViewmodel() {
   // held. Same bottom-right framing as the tools.
   const apple = mk(0.44, -0.42, -1.05, 0.15, 0.10, -0.15);
   const appleMesh = new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 10),
-    new THREE.MeshStandardMaterial({ color: 0xd63a2f, roughness: 0.55 }));
+    new THREE.MeshStandardMaterial({ map: appleTex(), roughness: 0.55 }));
   appleMesh.scale.y = 0.92; apple.add(appleMesh);
   vmBox(apple, 0.02, 0.08, 0.02, woodDark, 0, 0.13, 0); // stem
   viewmodels.apple = apple;
   // Carrot: orange point-down cone + green leafy top
   const carrot = mk(0.44, -0.42, -1.05, 0.15, 0.10, -0.15);
   const cone = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.26, 8),
-    new THREE.MeshStandardMaterial({ color: 0xe87a1a, roughness: 0.7 }));
+    new THREE.MeshStandardMaterial({ map: carrotTex(), roughness: 0.7 }));
   cone.rotation.x = Math.PI; carrot.add(cone);
   const leafM = new THREE.MeshStandardMaterial({ color: 0x3d7a32, roughness: 0.8 });
   vmBox(carrot, 0.025, 0.12, 0.025, leafM, 0, 0.17, 0);
@@ -1236,8 +1265,8 @@ function buildViewmodel() {
   viewmodels.carrot = carrot;
   // Wheat: three golden stalks with grain heads
   const wheat = mk(0.44, -0.42, -1.05, 0.15, 0.10, -0.15);
-  const stalkM = new THREE.MeshStandardMaterial({ color: 0xc9a227, roughness: 0.8 });
-  const grainM = new THREE.MeshStandardMaterial({ color: 0xe8c95a, roughness: 0.8 });
+  const stalkM = new THREE.MeshStandardMaterial({ map: wheatTex(), roughness: 0.8 });
+  const grainM = new THREE.MeshStandardMaterial({ map: wheatTex(), roughness: 0.8 });
   for (const [x, h] of [[-0.05, 0.30], [0, 0.36], [0.05, 0.30]]) {
     vmBox(wheat, 0.02, h, 0.02, stalkM, x, 0, 0);
     vmBox(wheat, 0.05, 0.09, 0.05, grainM, x, h / 2 + 0.05, 0);
@@ -1245,7 +1274,7 @@ function buildViewmodel() {
   viewmodels.wheat = wheat;
   // Phone: small dark slab with a glowing purple screen.
   const phone = mk(0.44, -0.42, -1.05, 0.15, 0.10, -0.15);
-  vmBox(phone, 0.16, 0.30, 0.03, new THREE.MeshStandardMaterial({ color: 0x1a1a24, roughness: 0.4 }), 0, 0, 0);
+  vmBox(phone, 0.16, 0.30, 0.03, new THREE.MeshStandardMaterial({ map: phoneTex(), roughness: 0.4 }), 0, 0, 0);
   vmBox(phone, 0.13, 0.20, 0.035, new THREE.MeshStandardMaterial({ color: 0x2a2a3a, roughness: 0.3, emissive: 0x7a5cff, emissiveIntensity: 0.5 }), 0, 0.02, 0);
   viewmodels.phone = phone;
   // Shadow Sword: dark blade, dark grip, and a purple eye where the
@@ -1253,23 +1282,34 @@ function buildViewmodel() {
   const ss = mk();
   vmBox(ss, 0.045, 0.30, 0.045, woodDark, 0, -0.05, 0); // grip
   vmBox(ss, 0.16, 0.05, 0.05, new THREE.MeshStandardMaterial({ color: 0x3a3a4a, roughness: 0.5, metalness: 0.4 }), 0, 0.13, 0); // guard
-  vmBox(ss, 0.07, 0.34, 0.025, new THREE.MeshStandardMaterial({ color: 0x232338, roughness: 0.35, metalness: 0.5 }), 0, 0.32, 0); // blade
+  // Tapered blade + glowing edge ridge: no more flat rectangle.
+  const ssBlade = swordBladeMesh(
+    new THREE.MeshStandardMaterial({ map: shadowTex(), roughness: 0.35, metalness: 0.5 }),
+    new THREE.MeshStandardMaterial({ color: 0xb07aff, emissive: 0x7a5cff, emissiveIntensity: 0.9 }));
+  ssBlade.position.set(0, 0.15, 0); ss.add(ssBlade);
   const eye = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 8),
     new THREE.MeshStandardMaterial({ color: 0xb07aff, emissive: 0xb07aff, emissiveIntensity: 1.6 }));
   eye.position.set(0, 0.13, 0.035); ss.add(eye);
   viewmodels.shadow_sword = ss;
-  // Crafted swords: same framing as the Shadow Sword, blade tinted
-  // per material so held wood/stone/iron read apart at a glance.
-  const mkSword = (key, bladeColor) => {
+  // Crafted swords: same framing as the Shadow Sword, blade material
+  // per tier so held wood/stone/iron read apart at a glance.
+  const mkSword = (key, bladeMat, edgeMat) => {
     const s = mk();
     vmBox(s, 0.045, 0.30, 0.045, woodDark, 0, -0.05, 0); // grip
     vmBox(s, 0.16, 0.05, 0.05, steelDark, 0, 0.13, 0); // guard
-    vmBox(s, 0.07, 0.34, 0.025, new THREE.MeshStandardMaterial({ color: bladeColor, roughness: 0.35, metalness: 0.4 }), 0, 0.32, 0); // blade
+    const b = swordBladeMesh(bladeMat, edgeMat);
+    b.position.set(0, 0.15, 0); s.add(b);
     viewmodels[key] = s;
   };
-  mkSword('sword_wood', 0x8a5a2b);
-  mkSword('sword_stone', 0x9aa0a8);
-  mkSword('sword_iron', 0xc8ccd2);
+  mkSword('sword_wood',
+    new THREE.MeshStandardMaterial({ map: woodTex(), roughness: 0.8 }),
+    new THREE.MeshStandardMaterial({ color: 0xc8a87e, roughness: 0.8 }));
+  mkSword('sword_stone',
+    new THREE.MeshStandardMaterial({ map: stoneLightTex(), color: 0x9aa0a8, roughness: 0.9 }),
+    new THREE.MeshStandardMaterial({ color: 0xc8ccd2, roughness: 0.4, metalness: 0.3 }));
+  mkSword('sword_iron',
+    new THREE.MeshStandardMaterial({ map: steelTex(), roughness: 0.35, metalness: 0.6 }),
+    new THREE.MeshStandardMaterial({ color: 0xe8eaec, roughness: 0.25, metalness: 0.7 }));
   for (const g of Object.values(viewmodels)) g.traverse((m) => { if (m.isMesh) m.castShadow = false; });
   // Back-compat: old code references `viewmodel` for driving visibility
   viewmodel = { set visible(v) { for (const g of Object.values(viewmodels)) g.visible = v && g.userData.active; }, get visible() { return false; } };
@@ -1715,59 +1755,41 @@ function canvasTex(key, draw) {
   t.colorSpace = THREE.SRGBColorSpace;
   _texCache[key] = t; return t;
 }
-function grainTex() {
-  return canvasTex('grain', (x) => {
-    x.fillStyle = '#ffffff'; x.fillRect(0, 0, 256, 256);
-    for (let i = 0; i < 46; i++) {
-      x.fillStyle = `rgba(90,60,30,${0.05 + Math.random() * 0.10})`;
-      x.fillRect(0, Math.random() * 256, 256, 1 + Math.random() * 3);
-    }
-    for (let i = 0; i < 3; i++) {
-      const kx = 30 + Math.random() * 196, ky = 30 + Math.random() * 196;
-      x.strokeStyle = 'rgba(90,60,30,0.25)'; x.lineWidth = 2;
-      x.beginPath(); x.ellipse(kx, ky, 8, 5, 0, 0, Math.PI * 2); x.stroke();
-      x.beginPath(); x.ellipse(kx, ky, 3.5, 2, 0, 0, Math.PI * 2); x.stroke();
-    }
-  });
+// Texture redo (2026-10-29): the old white-base canvases were multiplied
+// by a color lerped 45% toward paint brown, which washed every wall,
+// floor, and roof into mud. The shared textures.js canvases below are
+// PRE-TINTED to their material hue, so matTex() now uses a white color
+// and the map carries the hue. Call sites are unchanged.
+// Shared textured-material cache for ground drops: one material per
+// (texture, color, roughness, metalness), never one per drop.
+const _dropMatCache = {};
+function dropTexMat(tex, color, rough = 0.8, metal = 0) {
+  const key = tex.uuid + '|' + color + '|' + rough + '|' + metal;
+  if (!_dropMatCache[key]) _dropMatCache[key] = new THREE.MeshStandardMaterial({ map: tex, color, roughness: rough, metalness: metal });
+  return _dropMatCache[key];
 }
-function brickTex() {
-  return canvasTex('brick', (x) => {
-    x.fillStyle = '#e8e0d0'; x.fillRect(0, 0, 256, 256); // mortar
-    for (let r = 0; r < 8; r++) {
-      const off = (r % 2) * -32;
-      for (let cx = -1; cx < 5; cx++) {
-        const v = 200 + Math.floor(Math.random() * 40);
-        x.fillStyle = `rgb(${v},${v - 18},${v - 28})`;
-        x.fillRect(cx * 64 + off + 2, r * 32 + 2, 60, 28);
-        x.fillStyle = 'rgba(0,0,0,0.08)';
-        x.fillRect(cx * 64 + off + 2, r * 32 + 24, 60, 6);
-      }
-    }
-  });
-}
-function shingleTex() {
-  return canvasTex('shingle', (x) => {
-    x.fillStyle = '#d8d8d8'; x.fillRect(0, 0, 256, 256);
-    for (let r = 0; r < 8; r++) {
-      const off = (r % 2) * -21;
-      for (let cx = -1; cx < 7; cx++) {
-        const v = 175 + Math.floor(Math.random() * 45);
-        x.fillStyle = `rgb(${v},${v},${v + 5})`;
-        x.fillRect(cx * 42 + off + 1, r * 32 + 1, 40, 30);
-        x.fillStyle = 'rgba(0,0,0,0.18)';
-        x.fillRect(cx * 42 + off + 1, r * 32 + 27, 40, 4);
-      }
-    }
-  });
-}
-function brushedTex() {
-  return canvasTex('brushed', (x) => {
-    x.fillStyle = '#f0f0f0'; x.fillRect(0, 0, 256, 256);
-    for (let i = 0; i < 120; i++) {
-      x.fillStyle = `rgba(120,125,135,${0.04 + Math.random() * 0.06})`;
-      x.fillRect(Math.random() * 256, 0, 1, 256);
-    }
-  });
+function grainTex() { return woodTex(); }
+function brickTex() { return brickTintedTex(); }
+function shingleTex() { return shingleTintedTex(); }
+function brushedTex() { return steelTex(); }
+// Tapered sword blade: a flat extruded silhouette (taper + point) with
+// a center edge ridge, so swords never read as plain rectangles.
+// Extrude UVs are raw shape coords, so they are remapped to 0..1 here
+// or the blade map would sample one texel and read flat.
+function swordBladeMesh(bladeMat, edgeMat, len = 0.34, wid = 0.07) {
+  const g = new THREE.Group();
+  const shape = new THREE.Shape();
+  shape.moveTo(-wid / 2, 0); shape.lineTo(wid / 2, 0);
+  shape.lineTo(wid * 0.28, len * 0.82); shape.lineTo(0, len);
+  shape.lineTo(-wid * 0.28, len * 0.82); shape.closePath();
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.025, bevelEnabled: false });
+  geo.translate(0, 0, -0.0125);
+  const uv = geo.attributes.uv;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, (uv.getX(i) + wid / 2) / wid, uv.getY(i) / len);
+  const blade = new THREE.Mesh(geo, bladeMat); blade.castShadow = true; g.add(blade);
+  const edge = new THREE.Mesh(new THREE.BoxGeometry(0.014, len * 0.86, 0.032), edgeMat);
+  edge.position.set(0, len * 0.45, 0); g.add(edge);
+  return g;
 }
 
 function buildPieceMesh(itemId, colorOverride) {
@@ -1778,34 +1800,41 @@ function buildPieceMesh(itemId, colorOverride) {
   const pc = colorOverride || (itemId.startsWith('wall_') ? PIECE_COLORS[itemId.slice(5)] : null) || paintColor;
   const matFor = (base, steel) => {
     const pcc = new THREE.Color(pc), bc = new THREE.Color(base);
-    return new THREE.MeshStandardMaterial({ color: steel ? pcc : bc.lerp(pcc, 0.45), roughness: 0.9 });
+    // Stated colors win: the old 45% lerp toward paint brown turned
+    // cream walls tan, green shutters muddy, and steel trims brown.
+    return new THREE.MeshStandardMaterial({ color: steel ? pcc : bc, roughness: 0.9 });
   };
   const matTex = (base, steel, tex, rough = 0.9, metal = 0) => {
-    const pcc = new THREE.Color(pc), bc = new THREE.Color(base);
-    return new THREE.MeshStandardMaterial({ map: tex, color: steel ? pcc : bc.lerp(pcc, 0.45), roughness: rough, metalness: metal });
+    // Pre-tinted maps carry the hue, so the color stays white — the
+    // old lerp washed every textured piece toward paint brown.
+    return new THREE.MeshStandardMaterial({ map: tex, color: 0xffffff, roughness: rough, metalness: metal });
   };
   const add = (mesh, x, y, z) => { mesh.position.set(x, y, z); mesh.castShadow = true; mesh.receiveShadow = true; g.add(mesh); return mesh; };
   if (itemId.startsWith('wall_')) {
     const kind = itemId.slice(5);
     if (kind === 'window') {
-      add(new THREE.Mesh(new THREE.BoxGeometry(0.7, 3, 0.3), matFor(0x8a5a2b)), -1.15, 1.5, 0);
-      add(new THREE.Mesh(new THREE.BoxGeometry(0.7, 3, 0.3), matFor(0x8a5a2b)), 1.15, 1.5, 0);
-      add(new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.7, 0.3), matFor(0x8a5a2b)), 0, 2.65, 0);
-      add(new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.7, 0.3), matFor(0x8a5a2b)), 0, 0.35, 0);
+      const frameM = matTex(0x8a5a2b, false, woodTex()), trimM = matTex(0x6b4226, false, woodTex());
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.7, 3, 0.3), frameM), -1.15, 1.5, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.7, 3, 0.3), frameM), 1.15, 1.5, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.7, 0.3), frameM), 0, 2.65, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.7, 0.3), frameM), 0, 0.35, 0);
       const glass = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.6, 0.1),
-        new THREE.MeshStandardMaterial({ color: 0x9fd4ff, transparent: true, opacity: 0.55, roughness: 0.1 }));
+        new THREE.MeshStandardMaterial({ map: frostTex(), transparent: true, opacity: 0.55, roughness: 0.1 }));
       add(glass, 0, 1.5, 0);
-      add(new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.6, 0.16), matFor(0x6b4226)), 0, 1.5, 0); // center mullion
-      add(new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.08, 0.16), matFor(0x6b4226)), 0, 1.5, 0); // cross mullion
-      add(new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.10, 0.45), matFor(0x6b4226)), 0, 0.32, 0); // protruding sill
-      add(new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.10, 0.36), matFor(0x6b4226)), 0, 2.72, 0); // header trim
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.6, 0.16), trimM), 0, 1.5, 0); // center mullion
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.08, 0.16), trimM), 0, 1.5, 0); // cross mullion
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.10, 0.45), trimM), 0, 0.32, 0); // protruding sill
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.10, 0.36), trimM), 0, 2.72, 0); // header trim
     } else if (kind === 'door') {
-      add(new THREE.Mesh(new THREE.BoxGeometry(0.9, 3, 0.3), matFor(0x8a5a2b)), -1.05, 1.5, 0);
-      add(new THREE.Mesh(new THREE.BoxGeometry(0.9, 3, 0.3), matFor(0x8a5a2b)), 1.05, 1.5, 0);
-      add(new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.8, 0.3), matFor(0x8a5a2b)), 0, 2.6, 0);
-      add(new THREE.Mesh(new THREE.BoxGeometry(1.2, 2.2, 0.15), new THREE.MeshStandardMaterial({ color: 0x5a3a1a, roughness: 0.9 })), 0, 1.1, 0);
-      add(new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.7, 0.03), matFor(0x4a3220)), 0, 1.75, 0.09); // upper door panel
-      add(new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.7, 0.03), matFor(0x4a3220)), 0, 0.65, 0.09); // lower door panel
+      const frameM = matTex(0x8a5a2b, false, woodTex());
+      const slabM = new THREE.MeshStandardMaterial({ map: woodLightTex(), color: 0x5a3a1a, roughness: 0.9 });
+      const panelM = new THREE.MeshStandardMaterial({ map: woodLightTex(), color: 0x4a3220, roughness: 0.9 });
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.9, 3, 0.3), frameM), -1.05, 1.5, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.9, 3, 0.3), frameM), 1.05, 1.5, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.8, 0.3), frameM), 0, 2.6, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.2, 2.2, 0.15), slabM), 0, 1.1, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.7, 0.03), panelM), 0, 1.75, 0.09); // upper door panel
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.7, 0.03), panelM), 0, 0.65, 0.09); // lower door panel
       add(new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.16, 0.05), new THREE.MeshStandardMaterial({ color: 0x2a1e10 })), -0.52, 1.6, 0.10); // hinges
       add(new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.16, 0.05), new THREE.MeshStandardMaterial({ color: 0x2a1e10 })), -0.52, 0.6, 0.10);
       const knob = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), new THREE.MeshStandardMaterial({ color: 0xf5c542, metalness: 0.6, roughness: 0.35 }));
@@ -1813,7 +1842,7 @@ function buildPieceMesh(itemId, colorOverride) {
       add(new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.10, 0.5), matFor(0x6b4226)), 0, 0.05, 0.05); // threshold step
     } else if (kind === 'ice') {
       add(new THREE.Mesh(new THREE.BoxGeometry(3, 3, 0.3),
-        new THREE.MeshStandardMaterial({ color: 0xbfe8ff, transparent: true, opacity: 0.85, roughness: 0.2 })), 0, 1.5, 0);
+        new THREE.MeshStandardMaterial({ map: frostTex(), transparent: true, opacity: 0.85, roughness: 0.2 })), 0, 1.5, 0);
       const crackM = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.7, roughness: 0.3 });
       const crack1 = new THREE.Mesh(new THREE.BoxGeometry(0.04, 1.2, 0.32), crackM); crack1.rotation.z = 0.4; add(crack1, -0.8, 1.9, 0); // frost cracks
       const crack2 = new THREE.Mesh(new THREE.BoxGeometry(0.04, 1.0, 0.32), crackM); crack2.rotation.z = -0.5; add(crack2, 0.6, 1.1, 0);
@@ -1885,7 +1914,7 @@ function buildPieceMesh(itemId, colorOverride) {
     // four sturdy legs with cross-braces, a lower shelf, and a framed
     // pegboard backboard with hanging tools (decoration only — crafting
     // still works exactly as before, via E).
-    const topM = matTex(0x8a5a2b, false, grainTex()), legM = matFor(0x6b4226), darkM = new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 1 });
+    const topM = matTex(0x8a5a2b, false, grainTex()), legM = matTex(0x6b4226, false, woodTex()), darkM = new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 1 });
     add(new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.12, 1.0), topM), 0, 0.92, 0);
     add(new THREE.Mesh(new THREE.BoxGeometry(2.06, 0.05, 1.06), darkM), 0, 0.85, 0); // edge trim under the slab
     add(new THREE.Mesh(new THREE.BoxGeometry(1.76, 0.14, 0.06), legM), 0, 0.74, 0.40); // front apron
@@ -1895,8 +1924,8 @@ function buildPieceMesh(itemId, colorOverride) {
     add(new THREE.Mesh(new THREE.BoxGeometry(1.76, 0.08, 0.08), legM), 0, 0.22, 0.40); // front brace
     add(new THREE.Mesh(new THREE.BoxGeometry(1.76, 0.08, 0.08), legM), 0, 0.22, -0.40); // back brace
     add(new THREE.Mesh(new THREE.BoxGeometry(1.76, 0.06, 0.80), legM), 0, 0.16, 0); // lower shelf
-    // Framed pegboard
-    const boardM = new THREE.MeshStandardMaterial({ color: 0x7a5a30, roughness: 1 });
+    // Framed pegboard (grained board; the peg dots stay as geometry)
+    const boardM = new THREE.MeshStandardMaterial({ map: woodTex(), roughness: 1 });
     add(new THREE.Mesh(new THREE.BoxGeometry(2.0, 1.25, 0.07), boardM), 0, 1.60, -0.48);
     add(new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.08, 0.10), legM), 0, 2.26, -0.48); // top frame rail
     add(new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.25, 0.10), legM), -0.98, 1.60, -0.48);
@@ -1906,8 +1935,8 @@ function buildPieceMesh(itemId, colorOverride) {
       add(new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.035, 0.02), pegM), px * 0.20, 1.18 + py * 0.27, -0.435);
       add(new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.035, 0.02), pegM), px * 0.20, 1.18 + py * 0.27, -0.525);
     }
-    const toolSteel = new THREE.MeshStandardMaterial({ color: 0x9aa0a8, roughness: 0.35, metalness: 0.65 });
-    const toolWood = new THREE.MeshStandardMaterial({ color: 0x6b4226, roughness: 0.9 });
+    const toolSteel = new THREE.MeshStandardMaterial({ map: steelTex(), roughness: 0.35, metalness: 0.65 });
+    const toolWood = new THREE.MeshStandardMaterial({ map: woodTex(), roughness: 0.9 });
     // Hanging hammer: handle + head + claw notch feel
     add(new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.40, 0.035), toolWood), -0.62, 1.55, -0.42);
     add(new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.09, 0.045), toolSteel), -0.62, 1.78, -0.42);
@@ -1951,7 +1980,7 @@ function buildPieceMesh(itemId, colorOverride) {
     // A believable vehicle machine: plinth, frame columns, gantry beam,
     // cabinet body with panel seams, glowing build screen, control panel,
     // warning light, side vents, and an open build bay at the front.
-    const bodyM = new THREE.MeshStandardMaterial({ color: 0x3a4a63, roughness: 0.5, metalness: 0.4 });
+    const bodyM = new THREE.MeshStandardMaterial({ map: panelTex(), roughness: 0.5, metalness: 0.4 });
     const darkM = new THREE.MeshStandardMaterial({ color: 0x1d2536, roughness: 0.6, metalness: 0.3 });
     const trimM = new THREE.MeshStandardMaterial({ color: 0xf5c542, roughness: 0.5 });
     add(new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.22, 2.1), darkM), 0, 0.11, 0); // plinth
@@ -1990,7 +2019,7 @@ function buildPieceMesh(itemId, colorOverride) {
   } else if (itemId === 'gas_pump') {
     // A proper pump: concrete plinth, body with side panels, red top cap,
     // display window, side hose loop + nozzle holster.
-    const bodyM = new THREE.MeshStandardMaterial({ color: 0xd8dde2, roughness: 0.55 });
+    const bodyM = new THREE.MeshStandardMaterial({ map: pumpPanelTex(), roughness: 0.55 });
     const redM = new THREE.MeshStandardMaterial({ color: 0xe5484d, roughness: 0.6 });
     const darkM = new THREE.MeshStandardMaterial({ color: 0x1d2536, roughness: 0.6 });
     add(new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.14, 0.9), new THREE.MeshStandardMaterial({ color: 0x8d8f94, roughness: 1 })), 0, 0.07, 0); // plinth
@@ -2008,20 +2037,46 @@ function buildPieceMesh(itemId, colorOverride) {
       add(new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.10, 0.04), new THREE.MeshStandardMaterial({ color: gc, roughness: 0.6 })), gx, 0.82, 0.37);
     add(new THREE.Mesh(new THREE.BoxGeometry(0.70, 0.06, 0.72), darkM), 0, 1.72, 0); // cap drip rail
   } else if (itemId === 'portal_command') {
-    // A portal command center: dark cabinet, glowing purple screen,
-    // and a little keypad beside it for picking a dimension.
-    const bodyM = new THREE.MeshStandardMaterial({ color: 0x2a2a3a, roughness: 0.5, metalness: 0.4 });
-    const darkM = new THREE.MeshStandardMaterial({ color: 0x1a1a24, roughness: 0.6, metalness: 0.3 });
+    // REDESIGNED 2026-10-29 (Liam's design): a flat platform on the
+    // ground, a claw-like frame rising from the floor that forms the
+    // portal arch, and a small control-pad machine standing to the
+    // RIGHT of the frame (local +x = the viewer's right from the
+    // front, since pieces face the player with local +z). The portal
+    // ring/disc sits INSIDE the arch at the piece origin — openPortal
+    // now spawns it at the machine center, not 2 units out.
+    // The arch clears the 2.8-wide ring: prong bases at |x| 1.85 lean
+    // inward to |x| ~1.55 at ring height, tips converging above it.
+    const steelDarkM = new THREE.MeshStandardMaterial({ map: steelTex(), color: 0x3a3f4a, roughness: 0.5, metalness: 0.6 });
     const glowM = new THREE.MeshStandardMaterial({ color: 0x7a5cff, emissive: 0x7a5cff, emissiveIntensity: 1.4 });
-    add(new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.22, 1.6), darkM), 0, 0.11, 0); // plinth
-    add(new THREE.Mesh(new THREE.BoxGeometry(2.0, 1.7, 1.1), bodyM), 0, 1.07, 0); // cabinet
-    add(new THREE.Mesh(new THREE.BoxGeometry(2.06, 0.10, 1.16), glowM), 0, 1.95, 0); // top trim
-    add(new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.7, 0.06), new THREE.MeshStandardMaterial({ color: 0x4a3a8a, emissive: 0x7a5cff, emissiveIntensity: 0.9 })), -0.4, 1.35, 0.58); // portal screen
-    add(new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.6, 0.10), darkM), 0.6, 1.25, 0.58); // keypad base
-    for (const [kx, ky] of [[-0.14, 0.14], [0.14, 0.14], [-0.14, -0.14], [0.14, -0.14]]) // keypad buttons
-      add(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.04), glowM), 0.6 + kx, 1.25 + ky, 0.64);
-    add(new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.7, 0.06), new THREE.MeshStandardMaterial({ color: 0x4a3a8a, emissive: 0x7a5cff, emissiveIntensity: 0.9 })), -0.4, 1.35, -0.58); // rear screen
-    add(new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.6, 0.10), darkM), 0.6, 1.25, -0.58); // rear keypad
+    const panelM = new THREE.MeshStandardMaterial({ map: panelTex(), roughness: 0.5, metalness: 0.4 });
+    add(new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.18, 3.2), steelDarkM), 0, 0.09, 0); // platform
+    add(new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.05, 0.08), glowM), 0, 0.20, 1.60); // front edge glow strip
+    for (const [bx, bz] of [[-2.3, 1.5], [2.3, 1.5], [-2.3, -1.5], [2.3, -1.5]]) { // platform bolts
+      const bolt = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), steelDarkM);
+      add(bolt, bx, 0.20, bz);
+    }
+    // Claw prongs, left (-x) and right (+x): knuckle, lower segment,
+    // middle segment leaning further in, glowing tip cone curling
+    // toward the top center. The arch between them stays open.
+    for (const side of [-1, 1]) {
+      const knuckle = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8), steelDarkM);
+      add(knuckle, side * 1.85, 0.38, 0);
+      const lower = new THREE.Mesh(new THREE.BoxGeometry(0.26, 1.35, 0.30), steelDarkM);
+      lower.rotation.z = side * -0.18; add(lower, side * 1.78, 0.95, 0);
+      const mid = new THREE.Mesh(new THREE.BoxGeometry(0.24, 1.25, 0.28), steelDarkM);
+      mid.rotation.z = side * -0.50; add(mid, side * 1.48, 2.05, 0);
+      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.85, 8), glowM);
+      tip.rotation.z = side * -1.05; add(tip, side * 0.72, 2.95, 0);
+    }
+    // Control-pad machine, right of the frame: cabinet + tilted
+    // glowing screen + 4 keypad buttons. This is where the player
+    // selects the dimension (interact opens the keypad menu).
+    add(new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.15, 0.55), panelM), 2.60, 0.58, 0.30);
+    const padScreen = new THREE.Mesh(new THREE.BoxGeometry(0.70, 0.50, 0.05),
+      new THREE.MeshStandardMaterial({ color: 0x4a3a8a, emissive: 0x7a5cff, emissiveIntensity: 0.9 }));
+    padScreen.rotation.x = -0.25; add(padScreen, 2.60, 1.05, 0.60);
+    for (const [kx, ky] of [[-0.16, 0.16], [0.16, 0.16], [-0.16, -0.16], [0.16, -0.16]])
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.04), glowM), 2.60 + kx, 0.55 + ky, 0.60);
   } else if (itemId === 'chest') {
     // REDESIGNED 2026-10-28: deep-wood planked body with seam grooves,
     // a true arched lid (half-barrel top), steel bands, brass latch
@@ -2029,8 +2084,8 @@ function buildPieceMesh(itemId, colorOverride) {
     // the same look as world loot chests.
     const woodM = matTex(0x9a6a35, false, grainTex());
     const darkM = new THREE.MeshStandardMaterial({ color: 0x4a3220, roughness: 1 });
-    const bandM = new THREE.MeshStandardMaterial({ color: 0x2a2d33, roughness: 0.45, metalness: 0.7 });
-    const brassM = new THREE.MeshStandardMaterial({ color: 0xd8a437, roughness: 0.35, metalness: 0.6 });
+    const bandM = new THREE.MeshStandardMaterial({ map: steelTex(), color: 0x2a2d33, roughness: 0.45, metalness: 0.7 });
+    const brassM = new THREE.MeshStandardMaterial({ map: goldLightTex(), color: 0xd8a437, roughness: 0.35, metalness: 0.6 });
     add(new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.58, 0.7), woodM), 0, 0.32, 0);
     add(new THREE.Mesh(new THREE.BoxGeometry(1.14, 0.08, 0.74), darkM), 0, 0.06, 0); // base plinth
     for (const sx of [-0.28, 0.28]) // plank seams on the front face
@@ -2060,10 +2115,10 @@ function buildPieceMesh(itemId, colorOverride) {
       add(new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.10, 0.74), bandM), cx, cy, 0);
     }
   } else if (itemId === 'house') {
-    add(new THREE.Mesh(new THREE.BoxGeometry(5, 3, 4), matFor(0xe8ddc8)), 0, 1.5, 0);
-    add(new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.18, 4.2), new THREE.MeshStandardMaterial({ color: 0x8d8f94, roughness: 1 })), 0, 0.09, 0); // stone foundation skirt
+    add(new THREE.Mesh(new THREE.BoxGeometry(5, 3, 4), new THREE.MeshStandardMaterial({ map: sidingTex(), roughness: 0.9 })), 0, 1.5, 0);
+    add(new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.18, 4.2), new THREE.MeshStandardMaterial({ map: stoneLightTex(), color: 0x8d8f94, roughness: 1 })), 0, 0.09, 0); // stone foundation skirt
     for (let fx = -2.2; fx <= 2.2; fx += 0.55) // foundation stones on the front face
-      add(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.16, 0.04), new THREE.MeshStandardMaterial({ color: 0x7a7d82, roughness: 1 })), fx, 0.09, 2.12);
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.16, 0.04), new THREE.MeshStandardMaterial({ map: stoneLightTex(), color: 0x7a7d82, roughness: 1 })), fx, 0.09, 2.12);
     const roof = new THREE.Mesh(new THREE.ConeGeometry(3.9, 1.6, 4), matTex(0xa34a3a, false, shingleTex()));
     roof.rotation.y = Math.PI / 4; add(roof, 0, 3.8, 0);
     add(new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.1, 0.5), matFor(0x8a5a2b)), 1.8, 4.3, -1.0); // chimney
@@ -2272,7 +2327,7 @@ function tillSoil() {
     if (crops.some((c) => c.x === x && c.z === z)) continue;
     const y = groundY(x, z);
     const soil = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.12, 0.95),
-      new THREE.MeshStandardMaterial({ color: 0x4a3220, roughness: 1 }));
+      new THREE.MeshStandardMaterial({ map: soilTex(), roughness: 1 }));
     soil.position.set(x, y + 0.06, z); soil.receiveShadow = true; scene.add(soil);
     crops.push({ x, z, y, seed: null, planted: 0, stage: 0, mesh: soil, sprout: null });
     made++;
@@ -2311,7 +2366,11 @@ function updateCrops() {
     if (stage !== c.stage) {
       c.stage = stage;
       if (c.sprout) scene.remove(c.sprout);
-      const mat = c.seed === 'seed_wheat' ? new THREE.MeshStandardMaterial({ color: stage >= 3 ? 0xe8c547 : 0x5da24a }) : new THREE.MeshStandardMaterial({ color: 0x3d7a32 });
+      // Leaf-streak map under the stage color: wheat still turns
+      // green -> gold, carrots stay green — color, not texture, stages.
+      const mat = c.seed === 'seed_wheat'
+        ? new THREE.MeshStandardMaterial({ map: leafLightTex(), color: stage >= 3 ? 0xe8c547 : 0x5da24a })
+        : new THREE.MeshStandardMaterial({ map: leafLightTex(), color: 0x3d7a32 });
       const h = 0.15 + stage * 0.25;
       const sprout = new THREE.Mesh(new THREE.ConeGeometry(0.16, h, 6), mat);
       sprout.position.set(c.x, c.y + 0.12 + h / 2, c.z);
@@ -2345,12 +2404,12 @@ function openVehiclePanel(machine, source) {
 }
 function spawnCar(x, z) {
   const g = new THREE.Group();
-  const bodyM = new THREE.MeshStandardMaterial({ color: 0xe5484d, roughness: 0.4, metalness: 0.3 });
+  const bodyM = new THREE.MeshStandardMaterial({ map: flakeTex(), roughness: 0.4, metalness: 0.3 });
   const body = new THREE.Mesh(new THREE.BoxGeometry(2, 0.6, 4.2), bodyM);
   body.position.y = 0.55; body.castShadow = true; g.add(body);
   const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.55, 2), new THREE.MeshStandardMaterial({ color: 0x22304a, roughness: 0.3 }));
   cabin.position.set(0, 1.1, -0.2); cabin.castShadow = true; g.add(cabin);
-  const wheelM = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.9 });
+  const wheelM = new THREE.MeshStandardMaterial({ map: treadTex(), roughness: 0.9 });
   const wheels = [];
   for (const [wx, wz] of [[-1, 1.3], [1, 1.3], [-1, -1.3], [1, -1.3]]) {
     const w = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.25, 12), wheelM);
@@ -2992,7 +3051,7 @@ function loadSave() {
   for (const c of (ws?.crops || [])) {
     const y = groundY(c.x, c.z);
     const soil = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.12, 0.95),
-      new THREE.MeshStandardMaterial({ color: 0x4a3220, roughness: 1 }));
+      new THREE.MeshStandardMaterial({ map: soilTex(), roughness: 1 }));
     soil.position.set(c.x, y + 0.06, c.z); scene.add(soil);
     crops.push({ x: c.x, z: c.z, y, seed: c.seed, planted: c.planted, stage: -1, mesh: soil, sprout: null });
   }

@@ -126,6 +126,26 @@ S.lobbyBuilt = null; // background panorama-build promise (resolves when the isl
 function lobbyBuildProgress(label, frac) {
   const el = $('lobby-island-note');
   if (el && !lobbyIslandReady) el.textContent = `Building island… ${Math.round(frac * 100)}%`;
+  // While the boot overlay is still up, the same progress drives its
+  // bar + percent. Post-boot, only the note above keeps updating.
+  const boot = $('boot-loading');
+  if (boot && !boot.classList.contains('hidden')) {
+    const fill = $('boot-fill'), pct = $('boot-pct');
+    if (fill) fill.style.width = Math.round(frac * 100) + '%';
+    if (pct) pct.textContent = Math.round(frac * 100) + '%';
+  }
+}
+// Boot gate (2026-10-29, Liam: loading screen first, Play only once
+// loading is confirmed): the boot overlay hides ONLY from this settle
+// callback — never from showLobby or the no-session branch. The
+// panorama's finally sets lobbyIslandReady on built OR failed, so a
+// failed build still settles and can never trap the player here.
+// Hiding is idempotent: adding .hidden twice is a no-op.
+function onLobbyBuiltSettled() {
+  $('boot-loading')?.classList.add('hidden');
+  // A world/server selected while the boot overlay was up (e.g. via
+  // a restored selection path) gets its Play button only now.
+  if (lobbyIslandReady && (S.selectedWorld || S.selectedServer)) $('btn-play')?.classList.remove('hidden');
 }
 let lobbySetupDone = false;
 async function initLobby3D() {
@@ -143,7 +163,20 @@ async function initLobby3D() {
   if (lobbySetupDone) return;
   lobbySetupDone = true;
   S.lobbyReady = new Promise((resolve) => { lobbyReadyResolve = resolve; });
-  initLobby3DSetup();
+  try {
+    initLobby3DSetup();
+  } catch (err) {
+    // Setup itself failed (e.g. no WebGL): the panorama build can
+    // never run, so settle the boot gate here instead of trapping
+    // the player on the boot screen. The lobby UI still works;
+    // only the 3D panorama is missing.
+    console.error('Lobby 3D setup failed:', err);
+    lobbyIslandReady = true;
+    lobbyReadyResolve?.();
+    S.lobbyBuilt = Promise.resolve();
+    S.lobbyBuilt.then(onLobbyBuiltSettled, onLobbyBuiltSettled);
+    return;
+  }
   S.lobbyBuilt = (async () => {
     try {
       // Light build: same terrain and prop density near the camera,
@@ -160,6 +193,10 @@ async function initLobby3D() {
       $('lobby-island-note')?.classList.add('hidden');
     }
   })();
+  // The boot overlay and Play gating both hang off this settle — the
+  // promise never rejects (the try/catch above swallows build errors),
+  // so the second handler is belt-and-braces only.
+  S.lobbyBuilt.then(onLobbyBuiltSettled, onLobbyBuiltSettled);
 }
 function initLobby3DSetup() {
   const bgCanvas = $('lobby-bg');
@@ -290,7 +327,9 @@ function setPfp(img, name) {
   img.onerror = () => { img.src = initialAvatar(name); };
 }
 function showLobby() {
-  $('boot-loading')?.classList.add('hidden');
+  // NOTE: the boot overlay is NOT hidden here — it hides only from
+  // onLobbyBuiltSettled (panorama build settled). It covers the lobby
+  // (z-200) until then.
   $('auth-screen').classList.add('hidden');
   $('lobby-screen').classList.remove('hidden');
   // Island still building (e.g. fast login right after page load)?
@@ -541,7 +580,10 @@ $('card-settings-save').onclick = () => {
 function selectWorld(w) {
   S.selectedWorld = w.id; S.selectedServer = null;
   renderWorlds(); renderServers();
-  $('btn-play').classList.remove('hidden');
+  // Play gating: no Play button until the panorama build has settled
+  // (lobbyIslandReady). If it hasn't, onLobbyBuiltSettled reveals Play
+  // for the already-selected world when the build settles.
+  if (lobbyIslandReady) $('btn-play').classList.remove('hidden');
   $('selected-world-label').textContent = 'Selected: ' + w.name;
   // Close the sheet so the hero character + Play button are visible —
   // the sheet otherwise keeps covering them after a tap.
@@ -550,7 +592,9 @@ function selectWorld(w) {
 function selectServer(s) {
   S.selectedServer = s.id; S.selectedWorld = null;
   renderWorlds(); renderServers();
-  $('btn-play').classList.remove('hidden');
+  // Play gating, same as selectWorld: reveal only once the build
+  // has settled; onLobbyBuiltSettled covers the already-selected case.
+  if (lobbyIslandReady) $('btn-play').classList.remove('hidden');
   $('selected-world-label').textContent = 'Selected server: ' + s.name;
   // Same as selectWorld: close the sheet to reveal hero + Play.
   setWorldsOpen(false);
@@ -1073,8 +1117,8 @@ if (params.get('autoguest') === '1') {
   showLobby();
   if (params.get('screen') === 'customize') switchTab('customize');
 } else {
-  // No session: hide the boot loader, then show auth — never a
-  // "signed out" flash before the account check finishes.
-  $('boot-loading')?.classList.add('hidden');
+  // No session: show auth UNDER the boot overlay (z-200 covers it) —
+  // the overlay hides only from onLobbyBuiltSettled once the panorama
+  // build settles, never here. Auth is usable the moment it lifts.
   $('auth-screen').classList.remove('hidden');
 }

@@ -16,9 +16,15 @@
 <body>
 <div id="error-overlay" class="hidden"></div>
 
-<!-- Boot loading state: shown until the session check finishes, so the
-     auth screen never flashes a "signed out" state on reopen. -->
-<div id="boot-loading">Loading…</div>
+<!-- Boot loading screen (2026-10-29, Liam's order): the game opens on
+     this — UNBOUND wordmark + loading bar — and it hides ONLY when the
+     lobby panorama build settles (built or failed), never on the
+     session check. Auth/lobby render underneath it until then. -->
+<div id="boot-loading">
+  <img src="assets/wordmark.png" alt="UNBOUND" class="boot-wordmark">
+  <div class="boot-bar"><div id="boot-fill"></div></div>
+  <div id="boot-pct">0%</div>
+</div>
 
 <!-- ============ AUTH ============ -->
 <section id="auth-screen" class="screen hidden">
@@ -275,11 +281,17 @@
   <div id="help-panel" class="help-panel hidden"></div>
 
   <div id="phone-panel" class="phone-panel hidden">
+    <div class="phone-notch"></div>
     <div class="phone-screen">
+      <div class="phone-statusbar"><span class="phone-signal"><i></i><i></i><i></i><i></i></span><span class="phone-battery"></span></div>
       <h3>Phone</h3>
       <p id="phone-status" class="fine"></p>
-      <button id="phone-recall" class="btn small">Portal Recall</button>
-      <p class="fine">More apps coming soon.</p>
+      <div class="phone-apps">
+        <button id="phone-recall" class="btn small app-tile"><span class="app-icon">↻</span>Portal Recall</button>
+        <div class="app-slot">Soon</div>
+        <div class="app-slot">Soon</div>
+        <div class="app-slot">Soon</div>
+      </div>
       <button id="phone-close" class="btn small ghost">Close</button>
     </div>
   </div>

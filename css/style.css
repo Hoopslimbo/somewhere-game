@@ -67,7 +67,11 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
 #auth-screen input, #auth-screen select { border-radius: 12px; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06); clip-path: none; font-weight: 500; }
 
 /* ---------- Boot loading (no signed-out flash) ---------- */
-#boot-loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--bg); color: var(--dim); font-size: 18px; font-weight: 600; z-index: 200; }
+#boot-loading { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; background: #0a0e1e; color: var(--dim); font-size: 18px; font-weight: 600; z-index: 200; }
+#boot-loading .boot-wordmark { width: min(420px, 72vw); height: auto; }
+#boot-loading .boot-bar { width: min(320px, 70vw); height: 10px; border-radius: 999px; background: rgba(255,255,255,.14); overflow: hidden; }
+#boot-loading #boot-fill { height: 100%; width: 0%; background: #8ec9ff; border-radius: 999px; transition: width .2s ease; }
+#boot-loading #boot-pct { color: rgba(255,255,255,.75); font-size: 15px; font-weight: 700; }
 
 /* Loading screen between Play and world entry: covers the synchronous
    world build so it reads as loading, not a frozen lag spike. */
@@ -364,6 +368,34 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
 #game-screen .phone-panel .btn { width: 100%; margin-top: 10px; background: linear-gradient(180deg, #5c5c64, #3a3a40); border: 1px solid rgba(255,255,255,.18); border-radius: 12px; color: #fff; padding: 8px; }
 #game-screen .phone-panel .btn:disabled { opacity: .45; }
 #game-screen .phone-panel .fine { color: rgba(255,255,255,.65); font-size: 13px; }
+/* Phone menu, restyled to actually look like a phone (2026-10-29):
+   notch, status-bar strip, Portal Recall as an app tile, and Soon
+   placeholder slots where future apps will go. IDs/wiring unchanged. */
+#game-screen .phone-panel .phone-notch { position: absolute; left: 50%; top: 7px; transform: translateX(-50%); width: 72px; height: 14px; background: #000; border-radius: 999px; z-index: 2; }
+#game-screen .phone-panel .phone-screen { background: linear-gradient(180deg, #1d1d2e, #12121e); padding-top: 26px; }
+#game-screen .phone-panel .phone-statusbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; color: rgba(255,255,255,.75); }
+#game-screen .phone-panel .phone-signal { display: flex; align-items: flex-end; gap: 2px; }
+#game-screen .phone-panel .phone-signal i { display: block; width: 3px; background: currentColor; border-radius: 1px; }
+#game-screen .phone-panel .phone-signal i:nth-child(1) { height: 5px; }
+#game-screen .phone-panel .phone-signal i:nth-child(2) { height: 8px; }
+#game-screen .phone-panel .phone-signal i:nth-child(3) { height: 11px; }
+#game-screen .phone-panel .phone-signal i:nth-child(4) { height: 14px; }
+#game-screen .phone-panel .phone-battery { display: block; width: 24px; height: 12px; border: 1.5px solid rgba(255,255,255,.75); border-radius: 4px; position: relative; }
+#game-screen .phone-panel .phone-battery::after { content: ''; position: absolute; left: 2px; top: 2px; bottom: 2px; width: 14px; background: #7ddf95; border-radius: 2px; }
+#game-screen .phone-panel .phone-apps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 12px 0 4px; }
+#game-screen .phone-panel .app-tile { grid-column: 1 / -1; margin-top: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 16px 8px; border-radius: 16px; background: linear-gradient(180deg, #7a5cff, #5a3ae0); border-color: transparent; font-size: 14px; }
+#game-screen .phone-panel .app-tile .app-icon { font-size: 26px; line-height: 1; }
+#game-screen .phone-panel .app-slot { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; border: 1.5px dashed rgba(255,255,255,.25); border-radius: 16px; color: rgba(255,255,255,.45); font-size: 12px; font-weight: 600; }
+/* Portal menu, restyled as a control-pad screen (2026-10-29): scoped
+   to shop panels that contain dimension buttons, so vehicle/shop/chest
+   panels are untouched. data-dim buttons + disabled logic unchanged. */
+#game-screen .shop-panel:has([data-dim]) h3 { letter-spacing: 2px; font-size: 18px; }
+#game-screen .shop-panel:has([data-dim]) .portal-dim { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12); border-radius: 14px; padding: 12px 14px; margin-bottom: 10px; text-align: left; }
+#game-screen .shop-panel:has([data-dim]) .portal-dim b { display: block; color: #fff; font-size: 15px; }
+#game-screen .shop-panel:has([data-dim]) .portal-flavor { display: block; font-size: 13px; font-weight: 500; color: rgba(255,255,255,.65); margin-top: 2px; }
+#game-screen .shop-panel:has([data-dim]) .portal-here { display: inline-block; margin-top: 6px; font-size: 11px; font-weight: 700; color: #7ddf95; background: rgba(94,208,122,.15); border-radius: 999px; padding: 2px 8px; }
+#game-screen .shop-panel:has([data-dim]) .portal-dim.is-here { border-color: rgba(122,92,255,.6); background: rgba(122,92,255,.12); }
+#game-screen .shop-panel:has([data-dim]) .portal-dim .btn { flex: none; width: auto; }
 
 /* ---------- Fix batch 2 ---------- */
 /* Lobby character ALWAYS dead-center (Fortnite-style): the hero is a

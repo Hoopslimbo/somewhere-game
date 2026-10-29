@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { buildCharacter } from './character.js';
+import { woodTex, barkLightTex, leafLightTex, stoneLightTex, steelDarkTex, rustLightTex, goldLightTex, woodLightTex, leafNoiseTex, pebbleLightTex, dirtLightTex, flowerTex } from './textures.js';
 
 // ---- Deterministic noise ----
 function hash2(x, y, seed) {
@@ -182,52 +183,81 @@ const MATS = {
   rust: std(0xb85c2a, 0.9),
   gold: std(0xf5c542, 0.35, 0.35, { emissive: 0x442200 }), // low metalness: no env map, so high metalness read as dark brown
   wood: [0x8a5a2b, 0x7a4e24, 0x96682f].map((c) => std(c, 1)),
-  chest: std(0x9a6a35, 0.9),
+  // Loot-chest body reuses the placed chest's pre-tinted grain body.
+  chest: std(0xffffff, 0.9, 0, { map: woodTex() }),
   chestLid: [std(0xf5c542, 0.3, 0.8, { emissive: 0x442200 }), std(0x6b4a26, 0.9), std(0x8a5a2b, 0.9)],
   snow: std(0xf2f6fa, 0.9),
   lantern: std(0xffc766, 0.4, 0, { emissive: 0xff9a2a, emissiveIntensity: 1.6 }),
 };
 const pick = (arr, rand) => arr[Math.floor(rand() * arr.length)];
+// Texture redo (2026-10-29): light-base luminance maps on the shared
+// materials, so each material's color still drives its hue while the
+// map adds grain, speckle, and bark detail. The tex tag splits tree
+// instancing buckets by texture family (bark vs leaf) in
+// collectTreeParts — never one texture per tree.
+MATS.trunk.forEach((m) => { m.map = barkLightTex(); m.userData.tex = 'bark'; });
+MATS.birch.map = barkLightTex(); MATS.birch.userData.tex = 'bark';
+MATS.snag.map = barkLightTex(); MATS.snag.userData.tex = 'bark';
+MATS.leaf.forEach((m) => { m.map = leafLightTex(); m.userData.tex = 'leaf'; });
+MATS.pine.forEach((m) => { m.map = leafLightTex(); m.userData.tex = 'leaf'; });
+MATS.palmLeaf.forEach((m) => { m.map = leafLightTex(); m.userData.tex = 'leaf'; });
+MATS.stone.forEach((m) => { m.map = stoneLightTex(); });
+MATS.iron.map = steelDarkTex();
+MATS.rust.map = rustLightTex();
+MATS.gold.map = goldLightTex();
+MATS.wood.forEach((m) => { m.map = woodLightTex(); });
 
 function groundTexture() {
-  // Reworked ground detail: the old texture was a flat white canvas
-  // with harsh 1.6px speckle tiled 110× — up close it read as noisy
-  // plastic, and the tiling showed. The new one is multi-scale and
-  // soft: large low-contrast mottled blobs (patchy grass/dirt/sand
-  // variation), a mid layer of soft grain, and only a whisper of fine
-  // speckle — all in neutral gray so the per-vertex biome colors still
-  // drive the actual hue. Tiled 48× instead of 110× so the repeat is
-  // far less visible at walking eye level.
+  // Texture redo (2026-10-29): the grid-with-color-splashed look came
+  // from hue living ONLY in per-vertex colors (~1.9 units apart) over a
+  // deliberately neutral map. Vertices cannot carry sub-vertex detail,
+  // so the fix is map detail, not more vertices: two-scale detail in
+  // a light neutral base (vertex colors still drive the biome hue) —
+  // dense fine speckle/grain for close-up ground, soft irregular
+  // blotches with no straight tiling edges, at a much higher repeat
+  // (tile ~9.7 units instead of ~19) plus anisotropy 8 so the grain
+  // survives glancing angles. The 979-segment mesh is untouched.
   const cv = document.createElement('canvas');
   cv.width = cv.height = 512;
   const ctx = cv.getContext('2d');
-  ctx.fillStyle = '#cfcfcf'; ctx.fillRect(0, 0, 512, 512);
-  // Large soft mottling: overlapping radial blobs, ±10% brightness.
-  for (let i = 0; i < 260; i++) {
-    const x = Math.random() * 512, y = Math.random() * 512, r = 18 + Math.random() * 70;
+  ctx.fillStyle = '#d8d8d8'; ctx.fillRect(0, 0, 512, 512);
+  // Large soft blotches: irregular, low-contrast, no straight edges.
+  for (let i = 0; i < 130; i++) {
+    const x = Math.random() * 512, y = Math.random() * 512, r = 55 + Math.random() * 85;
     const light = Math.random() < 0.5;
     const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
-    grad.addColorStop(0, light ? 'rgba(255,255,255,0.10)' : 'rgba(60,60,60,0.10)');
+    grad.addColorStop(0, light ? 'rgba(255,255,255,0.07)' : 'rgba(70,70,70,0.07)');
     grad.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = grad;
     ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
   }
-  // Mid grain: soft 2–4px dots, low alpha — texture without noise.
-  for (let i = 0; i < 5200; i++) {
-    const g = 150 + Math.floor(Math.random() * 90);
-    ctx.fillStyle = `rgba(${g},${g},${g},0.16)`;
-    ctx.beginPath(); ctx.arc(Math.random() * 512, Math.random() * 512, 1 + Math.random() * 1.6, 0, Math.PI * 2); ctx.fill();
+  // Mid mottling: overlapping soft blobs, patchy ground variation.
+  for (let i = 0; i < 300; i++) {
+    const x = Math.random() * 512, y = Math.random() * 512, r = 12 + Math.random() * 48;
+    const light = Math.random() < 0.5;
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+    grad.addColorStop(0, light ? 'rgba(255,255,255,0.12)' : 'rgba(60,60,60,0.12)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  // Dense fine speckle/grain: the close-up detail the old map lacked.
+  for (let i = 0; i < 9000; i++) {
+    const g = 140 + Math.floor(Math.random() * 100);
+    ctx.fillStyle = `rgba(${g},${g},${g},0.22)`;
+    ctx.beginPath(); ctx.arc(Math.random() * 512, Math.random() * 512, 0.8 + Math.random() * 1.4, 0, Math.PI * 2); ctx.fill();
   }
   // Sparse tiny pebble dots for close-up richness.
-  for (let i = 0; i < 900; i++) {
+  for (let i = 0; i < 1200; i++) {
     const g = 90 + Math.floor(Math.random() * 90);
-    ctx.fillStyle = `rgba(${g},${g},${g},0.20)`;
+    ctx.fillStyle = `rgba(${g},${g},${g},0.25)`;
     ctx.fillRect(Math.random() * 512, Math.random() * 512, 1.4, 1.4);
   }
   const tex = new THREE.CanvasTexture(cv);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(96, 96); // same texel density as 48 over the old 380-size island
-  tex.anisotropy = 4;
+  tex.repeat.set(192, 192); // tile ~9.7 world units on the 1862 island
+  tex.anisotropy = 8;
+  tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
 
@@ -292,6 +322,7 @@ function makeTree(form, rand, snowy) {
     trunk.position.y = trunkH / 2; trunk.castShadow = true; g.add(trunk);
     const leafM = pick([0x7fae4e, 0x9abb52, 0x6fae4e], rand);
     const leafMat = std(leafM, 1);
+    leafMat.map = leafLightTex(); leafMat.userData.tex = 'leaf';
     for (let i = 0; i < 3; i++) {
       const s = new THREE.Mesh(new THREE.SphereGeometry(0.9 + rand() * 0.4, 8, 6), leafMat);
       s.position.set((rand() - 0.5) * 1.1, trunkH + (i - 1) * 0.6, (rand() - 0.5) * 1.1);
@@ -394,13 +425,17 @@ function collectTreeParts(group, bucketMap, tree) {
   group.traverse((obj) => {
     if (!obj.isMesh) return;
     const { key, geo, scale } = canonicalFor(obj);
-    let bucket = bucketMap.get(key);
+    // Split buckets by texture family too: a bark trunk and a leaf
+    // canopy must never share one material, or one map would tint both.
+    const texTag = obj.material.userData.tex || 'none';
+    const bkey = key + '|tx:' + texTag;
+    let bucket = bucketMap.get(bkey);
     if (!bucket) {
-      bucket = { geo, roughness: obj.material.roughness, metalness: obj.material.metalness, items: [] };
-      bucketMap.set(key, bucket);
+      bucket = { geo, roughness: obj.material.roughness, metalness: obj.material.metalness, tex: texTag, items: [] };
+      bucketMap.set(bkey, bucket);
     }
     const scaleMatrix = new THREE.Matrix4().makeScale(scale.x, scale.y, scale.z);
-    const part = { bucketKey: key, proxyMesh: obj, scaleMatrix, mesh: null, index: -1 };
+    const part = { bucketKey: bkey, proxyMesh: obj, scaleMatrix, mesh: null, index: -1 };
     const matrix = new THREE.Matrix4().multiplyMatrices(obj.matrixWorld, scaleMatrix);
     bucket.items.push({ matrix, color: obj.material.color.clone(), part });
     tree.parts.push(part);
@@ -411,9 +446,12 @@ function collectTreeParts(group, bucketMap, tree) {
 // its (mesh, index). Called once, after the tree loop.
 function buildTreeInstancedMeshes(scene, bucketMap) {
   for (const bucket of bucketMap.values()) {
+    // Light-base map under the white material: instanceColor still
+    // drives each part's hue, the map only adds bark/leaf detail.
+    const texMap = bucket.tex === 'bark' ? barkLightTex() : bucket.tex === 'leaf' ? leafLightTex() : null;
     const inst = new THREE.InstancedMesh(
       bucket.geo,
-      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: bucket.roughness, metalness: bucket.metalness }),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: bucket.roughness, metalness: bucket.metalness, ...(texMap ? { map: texMap } : {}) }),
       bucket.items.length);
     bucket.items.forEach((item, idx) => {
       inst.setMatrixAt(idx, item.matrix);
@@ -727,10 +765,12 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   // Ground stones (pickup fallback for chopping)
   // Left individual like rocks: same per-vertex jitter argument, and
   // game.js removes them with scene.remove(mesh), which still works.
+  // Spread island-wide like trees/rocks — NOT clustered in a pile
+  // around spawn (and the gold bench), per Liam 2026-10-29.
   const groundStones = [];
   reportProgress(onProgress, 'Ground stones', 0.75);
   for (let i = 0; i < (light ? 0 : 240); i++) {
-    const x = spawn.x + (rand() - 0.5) * 44, z = spawn.z + (rand() - 0.5) * 44;
+    const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
     const h = heightAt(x, z, seed);
     if (h < 0.8) continue;
     const s = 0.20 + rand() * 0.16;
@@ -814,7 +854,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   // ---- Bushes, grass tufts, flowers (instanced — cheap, varied) ----
   const dummy = new THREE.Object3D();
   const bushGeo = new THREE.SphereGeometry(0.7, 7, 5);
-  const bushMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
+  const bushMat = new THREE.MeshStandardMaterial({ map: leafNoiseTex(), color: 0xffffff, roughness: 1 });
   const bushes = new THREE.InstancedMesh(bushGeo, bushMat, BUSH_CAP);
   const bushCol = new THREE.Color();
   let bi = 0;
@@ -846,7 +886,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   // trees, which Liam called out. New blades are ~0.2–0.3 tall, paper-thin,
   // slightly flattened and tilted, so they read as lawn, not saplings.
   const grassGeo = new THREE.ConeGeometry(0.035, 0.30, 4);
-  const grassMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
+  const grassMat = new THREE.MeshStandardMaterial({ map: leafNoiseTex(), color: 0xffffff, roughness: 1 });
   const grass = new THREE.InstancedMesh(grassGeo, grassMat, GRASS_CAP);
   let gi = 0;
   const grassCol = new THREE.Color();
@@ -879,7 +919,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   if (grass.instanceColor) grass.instanceColor.needsUpdate = true;
   scene.add(grass);
   const flowerGeo = new THREE.SphereGeometry(0.07, 6, 5);
-  const flowerMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 });
+  const flowerMat = new THREE.MeshStandardMaterial({ map: flowerTex(), color: 0xffffff, roughness: 0.8 });
   const flowers = new THREE.InstancedMesh(flowerGeo, flowerMat, FLOWER_CAP);
   const flowerCols = [0xe86a92, 0xf5c542, 0xffffff, 0xc07ae0];
   let fi = 0;
@@ -908,7 +948,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   // ---- Fine ground detail: pebbles, small rocks, dirt patches ----
   // Close-up richness: the ground is never a bare flat color up close.
   const pebGeo = new THREE.DodecahedronGeometry(1, 0);
-  const pebMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
+  const pebMat = new THREE.MeshStandardMaterial({ map: pebbleLightTex(), color: 0xffffff, roughness: 1 });
   const pebbles = new THREE.InstancedMesh(pebGeo, pebMat, PEB_CAP);
   const pebCol = new THREE.Color();
   let pi = 0;
@@ -973,7 +1013,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   if (dirtItems.length) {
     const dirt = new THREE.InstancedMesh(
       new THREE.CircleGeometry(1, 12),
-      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 }),
+      new THREE.MeshStandardMaterial({ map: dirtLightTex(), color: 0xffffff, roughness: 1 }),
       dirtItems.length);
     dirtItems.forEach((item, idx) => {
       dirt.setMatrixAt(idx, item.matrix);
@@ -995,7 +1035,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   }
   // Slatted top + leg braces so the gold bench reads as a built bench,
   // not a floating slab on two blocks.
-  const goldDark = new THREE.MeshStandardMaterial({ color: 0x9a7a1a, roughness: 0.5, metalness: 0.35, emissive: 0x332200 });
+  const goldDark = new THREE.MeshStandardMaterial({ map: goldLightTex(), color: 0x9a7a1a, roughness: 0.5, metalness: 0.35, emissive: 0x332200 });
   for (const sz of [-0.28, 0, 0.28]) {
     const slat = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.06, 0.22), goldDark);
     slat.position.set(0, 0.90, sz); bench.add(slat);
@@ -1011,9 +1051,9 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   const gBoard = new THREE.Mesh(new THREE.BoxGeometry(2.8, 1.5, 0.08), MATS.gold);
   gBoard.position.set(0, 1.55, -0.62); gBoard.castShadow = true; bench.add(gBoard);
   const gInner = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.3, 0.02),
-    new THREE.MeshStandardMaterial({ color: 0x6b5410, roughness: 0.7, metalness: 0.4 }));
+    new THREE.MeshStandardMaterial({ map: goldLightTex(), color: 0x6b5410, roughness: 0.7, metalness: 0.4 }));
   gInner.position.set(0, 1.55, -0.57); bench.add(gInner);
-  const gTool = new THREE.MeshStandardMaterial({ color: 0xf5c542, roughness: 0.35, metalness: 0.35, emissive: 0x442200 });
+  const gTool = new THREE.MeshStandardMaterial({ map: goldLightTex(), color: 0xf5c542, roughness: 0.35, metalness: 0.35, emissive: 0x442200 });
   const gHammer = new THREE.Group();
   const ghHandle = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.42, 0.03), gTool); ghHandle.position.y = -0.1; gHammer.add(ghHandle);
   const ghHead = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.08, 0.04), gTool); ghHead.position.y = 0.14; gHammer.add(ghHead);
