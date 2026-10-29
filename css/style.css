@@ -372,6 +372,11 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
 .friends-fab { position: fixed; top: 84px; right: 24px; width: 52px; height: 52px; border-radius: 50%; background: rgba(10,15,32,.72); border: 1px solid rgba(255,255,255,.10); color: var(--text); display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 45; backdrop-filter: blur(16px); box-shadow: 0 16px 40px rgba(0,0,0,.35); transition: transform .15s ease, background .15s ease; padding: 0; }
 .friends-fab:hover { transform: scale(1.06); background: rgba(18,26,52,.85); }
 #lobby-screen.friends-open .friends-fab { display: none; }
+/* Same treatment when the worlds sheet is open in play mode: the fab
+   sits at z 45 above the sheet (z 25), so it otherwise floats over —
+   "phases through" — the worlds panel. In menu mode the sheet is
+   in-flow and doesn't cover the screen, so the fab stays usable. */
+#lobby-screen:not(.menu-open).worlds-open .friends-fab { display: none; }
 .friends-search-row { display: flex; gap: 8px; margin-bottom: 12px; }
 .friends-search-row input { flex: 1; min-width: 0; clip-path: none; border-radius: 12px; }
 .btn-add-square { flex: none; width: 40px; height: 40px; padding: 0; font-size: 24px; font-weight: 800; line-height: 1; color: var(--text); background: rgba(0,0,0,.35); border: 2px solid rgba(255,255,255,.55); border-radius: 8px; cursor: pointer; }

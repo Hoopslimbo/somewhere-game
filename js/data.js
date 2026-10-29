@@ -42,7 +42,12 @@ export const ITEMS = {
   hoe: { name: 'Hoe', tool: 'hoe', power: 1, maxDur: 60, chip: '#5a7a3a' },
   // Temp fallback stone: 6 hits at power 0.5 fells a 3-HP tree, and the
   // break rule is per-tree (see chopTree) — it never dies mid-tree.
-  ground_stone: { name: 'Stone', tool: 'axe', power: 0.5, maxDur: 6, temp: true, chip: '#55575c' },
+  // Distinct display name on purpose: mined 'Stone' (the workbench
+  // material) and picked-up ground stones shared the name 'Stone',
+  // so the workbench could show 0/2 Stone while the inventory visibly
+  // held stones — same word, different items, and only the mined one
+  // counts toward recipes.
+  ground_stone: { name: 'Ground stone', tool: 'axe', power: 0.5, maxDur: 6, temp: true, chip: '#55575c' },
   workbench: { name: 'Workbench', placeable: 'workbench', chip: '#8a5a2b' },
   wall_wood: { name: 'Wood wall', placeable: 'wall', mat: 'wood', chip: '#6b4226' },
   wall_brick: { name: 'Brick wall', placeable: 'wall', mat: 'brick', chip: '#9a5a48' },

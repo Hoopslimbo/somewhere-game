@@ -118,34 +118,35 @@ let lobbyRenderer, panoRenderer, charRenderer, panoScene, panoCam, charScene, ch
 // a waiter can never hang on a promise that never settles.
 let lobbyReadyResolve = null;
 S.lobbyReady = null;
-let lobbyBuiltResolve = null, lobbyBuiltReject = null;
-S.lobbyBuilt = null;
+S.lobbyBuilt = null; // background panorama-build promise (resolves when the island is in the scene)
+let lobbySetupDone = false;
 async function initLobby3D() {
-  // Two separate promises, because the old single one deadlocked:
-  // startLobbyLoop awaited initLobby3D(), which returned lobbyReady,
-  // which only resolves on the lobby loop's first frame — but the loop
-  // only starts after startLobbyLoop's await finishes. The loop never
-  // started, so the lobby showed DOM only (tabs, nameplate, gradient)
-  // with no panorama and no character, forever.
-  // lobbyBuilt resolves when the 3D build finishes; lobbyReady still
-  // resolves on the loop's first rendered frame (or on build failure).
-  // startLobbyLoop awaits ONLY the build, never the first frame.
-  if (S.lobbyBuilt) return S.lobbyBuilt;
+  // Fast setup ONLY — renderers, scenes, cameras, character — so the
+  // lobby loop can start rendering sky + character immediately. The
+  // island panorama builds in the background (S.lobbyBuilt) and pops
+  // into panoScene when done; the loop renders whatever is there.
+  // Previously the character AND the loop waited on the full island
+  // build, so the lobby sat blue + DOM-only for the whole build — on
+  // a slow machine that looked broken, and anything the player did
+  // around the time the build finished (like clicking a tab) looked
+  // like the thing that fixed it. It wasn't; the build just finished.
+  // lobbyReady still resolves on the loop's first rendered frame, so
+  // the quit path's overlay wait is unchanged.
+  if (lobbySetupDone) return;
+  lobbySetupDone = true;
   S.lobbyReady = new Promise((resolve) => { lobbyReadyResolve = resolve; });
-  S.lobbyBuilt = new Promise((resolve, reject) => { lobbyBuiltResolve = resolve; lobbyBuiltReject = reject; });
-  try {
-    await initLobby3DInner();
-    if (lobbyBuiltResolve) { lobbyBuiltResolve(); lobbyBuiltResolve = null; }
-  } catch (err) {
-    // Release any quit-path waiter: the lobby screen still shows, just
-    // without its panorama. startLobbyLoop logs the error.
-    if (lobbyReadyResolve) { lobbyReadyResolve(); lobbyReadyResolve = null; }
-    if (lobbyBuiltReject) { lobbyBuiltReject(err); lobbyBuiltReject = null; }
-    throw err;
-  }
-  return S.lobbyBuilt;
+  initLobby3DSetup();
+  S.lobbyBuilt = (async () => {
+    try {
+      const panoWorld = await buildWorld(panoScene, 20261027); // the set lobby world, same for everyone
+      panoScene.userData.center = panoWorld.spawn;
+    } catch (err) {
+      // Sky + character still render; only the island is missing.
+      console.error('Lobby panorama failed to build:', err);
+    }
+  })();
 }
-async function initLobby3DInner() {
+function initLobby3DSetup() {
   const bgCanvas = $('lobby-bg');
   panoRenderer = new THREE.WebGLRenderer({ canvas: bgCanvas, antialias: true });
   panoRenderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -160,10 +161,11 @@ async function initLobby3DInner() {
   panoScene.add(new THREE.HemisphereLight(0xcfe8ff, 0x3d5a34, 0.95));
   const sun = new THREE.DirectionalLight(0xfff2cc, 1.5);
   sun.position.set(60, 90, 30); sun.castShadow = true; panoScene.add(sun);
-  const panoWorld = await buildWorld(panoScene, 20261027); // the set lobby world, same for everyone
-  panoScene.userData.center = panoWorld.spawn;
   panoScene.userData.seed = 20261027; // set panorama world seed, same for everyone
   panoScene.userData.camH = null; // smoothed orbit height, set on first frame
+  // Center defaults to the origin until the background build sets the
+  // real spawn — the loop's fallback covers it either way, so the sky
+  // orbits cleanly while the island is still building.
   panoCam = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 600);
 
   charRenderer = new THREE.WebGLRenderer({ canvas: $('char-canvas'), antialias: true, alpha: true });
@@ -253,12 +255,13 @@ function lobbyLoop() {
 }
 async function startLobbyLoop() {
   try {
+    // initLobby3D is fast setup only now — the island builds in the
+    // background and can no longer block (or fail) loop startup. A
+    // setup failure (e.g. no WebGL) still means no loop, but the lobby
+    // UI (worlds, Play) still works.
     await initLobby3D();
   } catch (err) {
-    // Panorama failed: log it and carry on without the loop — the lobby
-    // UI (worlds, Play) still works, and initLobby3D already released
-    // any quit-path waiter so no overlay can stick on this.
-    console.error('Lobby panorama failed to build:', err);
+    console.error('Lobby 3D setup failed:', err);
     return;
   }
   lobbyClock.start();

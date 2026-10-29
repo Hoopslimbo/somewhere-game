@@ -1796,18 +1796,33 @@ function ghostAim() {
   // Build placement follows the first-person crosshair ray: march along
   // the look ray until it hits the ground (max 7 units), and place there.
   // FREE placement: coordinates stay continuous — no grid snap — so
-  // pieces can sit flush against each other instead of jumping a full
-  // unit. Accepted side effect: pieces can overlap, since there is no
-  // piece-vs-piece collision. ghostValid's rules (range, water, tree
-  // clearance) are unchanged. (tillSoil's farming grid is untouched —
-  // that grid is farming, not building.)
+  // pieces can sit flush against each other. The earlier fix removed
+  // the Math.round on x/z, but the 0.5-unit march steps still quantized
+  // DEPTH: pulling a piece toward/away from you jumped in half-unit
+  // hops. Now the crossing segment is bisected to the exact ray/ground
+  // intersection, so depth moves smoothly too. ghostValid's rules
+  // (range, water, tree clearance) are unchanged. (tillSoil's farming
+  // grid is untouched — that grid is farming, not building.)
   const fx = -Math.sin(P.yaw) * Math.cos(P.pitch), fy = Math.sin(P.pitch), fz = -Math.cos(P.yaw) * Math.cos(P.pitch);
   const ex = P.pos.x, ey = P.pos.y + curEyeH, ez = P.pos.z;
+  const clearance = (d) => (ey + fy * d) - (groundY(ex + fx * d, ez + fz * d) + 0.15);
+  if (clearance(0) <= 0) { // eye somehow below ground: fall back to the first sample, as before
+    const x = ex + fx * 0.5, z = ez + fz * 0.5;
+    return { x, z, y: groundY(x, z) };
+  }
+  let prevD = 0;
   for (let d = 0.5; d <= 7; d += 0.5) {
-    const x = ex + fx * d, y = ey + fy * d, z = ez + fz * d;
-    if (y <= groundY(x, z) + 0.15) {
+    if (clearance(d) <= 0) {
+      let lo = prevD, hi = d; // ray above ground at lo, below at hi: bisect to the crossing
+      for (let i = 0; i < 10; i++) {
+        const mid = (lo + hi) / 2;
+        if (clearance(mid) <= 0) hi = mid; else lo = mid;
+      }
+      const dd = (lo + hi) / 2;
+      const x = ex + fx * dd, z = ez + fz * dd;
       return { x, z, y: groundY(x, z) };
     }
+    prevD = d;
   }
   const x = ex + fx * 7, z = ez + fz * 7;
   return { x, z, y: groundY(x, z) };
@@ -2356,6 +2371,16 @@ function openCraft(quick, opened) {
     }
     list.appendChild(tabs);
   }
+  renderCraftRows(quick);
+}
+// Rows live apart from the header/tabs so inventory changes refresh
+// them: updateHUD re-renders rows whenever the craft panel is open,
+// so the have/need counts can never go stale and show materials you
+// already picked up as missing. This only rebuilds .craft-row nodes —
+// the header and category tabs set above are left alone.
+function renderCraftRows(quick) {
+  const list = $('craft-list');
+  list.querySelectorAll('.craft-row').forEach((r) => r.remove());
   let recipes = quick ? QUICK_RECIPES : RECIPES;
   if (!quick && craftCat !== 'All') {
     const ids = CRAFT_CATS.find(([n]) => n === craftCat)[1];
@@ -2367,11 +2392,24 @@ function openCraft(quick, opened) {
     row.className = 'craft-row';
     row.innerHTML = `<span><span class="ic sm">${itemIcon(id)}</span> ${label}</span><span class="cost">${Object.entries(cost).map(([c, n]) => `${countOf(c)}/${n} ${ITEMS[c].name}`).join(' · ')}</span><button class="btn small" ${can ? '' : 'disabled'}>Craft</button>`;
     row.querySelector('button').onclick = () => {
-      for (const [c, n] of Object.entries(cost)) removeCount(c, n);
+      // Atomic craft: never eat materials without giving the item.
+      // addItem can fail on a full inventory, so snapshot what was
+      // taken and refund it if the output doesn't land. (Costs are
+      // all stackables, so the removal itself always frees the room
+      // the refund needs.)
+      const taken = [];
+      for (const [c, n] of Object.entries(cost)) {
+        const before = countOf(c);
+        removeCount(c, n);
+        taken.push([c, before - countOf(c)]);
+      }
       if (id === 'backpack') {
         P.hasBackpack = true;
         toast('Backpack equipped! Normal inventory is now 40 slots.');
-      } else addItem(id, 1);
+      } else if (!addItem(id, 1)) {
+        for (const [c, n] of taken) if (n > 0) addItem(c, n);
+        if (!ITEMS[id]?.tool) toast('Inventory full — make room first.'); // tool outputs already toasted by pushToInv
+      }
       openCraft(quick, craftOpened); updateHUD();
     };
     list.appendChild(row);
@@ -2426,6 +2464,7 @@ function updateHUD() {
   });
   updateHUDDynamic();
   if (!$('inv-panel').classList.contains('hidden')) renderInvGrid();
+  if (craftOpened && !$('inv-panel').classList.contains('hidden')) renderCraftRows(craftOpened.quick);
   syncBuildSel();
 }
 function updateHUDDynamic() {
