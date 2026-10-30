@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { buildCharacter } from './character.js';
+import { buildCharacter, animateCharacter } from './character.js';
 import { buildWorld, heightAt, biomeAt, makeSkyDome, hideTreeInstances, refreshTreeInstances } from './world.js';
 import { ITEMS, RECIPES, QUICK_RECIPES, cleanText, load, save } from './data.js';
 import { itemIcon } from './icons.js';
@@ -1083,6 +1083,12 @@ function updateDarkened(dt) {
       const th = groundY(tx, tz);
       if (th >= 0.8) d.group.position.set(tx, th, tz);
     }
+    // Walk/idle animation (redo slice 5): limbs swing while hunting,
+    // breathing while standing; the ground line is recomputed every
+    // frame (plus a tiny walk bob) so the feet never float or sink.
+    const hunting = dist < 50 && !P.dead;
+    animateCharacter(d.group, now / 1000, hunting ? 1 : 0);
+    d.group.position.y = groundY(d.group.position.x, d.group.position.z) + Math.abs(Math.cos(now / 1000 * 8)) * 0.05 * (hunting ? 1 : 0);
   }
 }
 // Per-frame Flipped work: rare Darkened spawns (max 2) and portal

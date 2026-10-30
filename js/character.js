@@ -49,21 +49,25 @@ export function buildCharacter(cfg = {}) {
 
   const shorts = c.pants === 'shorts';
 
-  // ---- Shoes: dark sole + boxy upper ----
+  // ---- Legs + shoes (redo slice 5): each leg is a group pivoting at
+  // the hip so walk animation can swing it; shoes ride with the leg,
+  // plus a darker toe cap for detail. Static pose is unchanged —
+  // every box sits exactly where it did before.
+  const legs = [];
   for (const side of [-1, 1]) {
-    const x = side * 0.14;
-    box(0.22, 0.06, 0.34, soleM, x, 0.03, 0.03, g);
-    box(0.20, 0.12, 0.30, shoeM, x, 0.12, 0.03, g);
-  }
-  // ---- Legs ----
-  for (const side of [-1, 1]) {
-    const x = side * 0.14;
+    const leg = new THREE.Group();
+    leg.position.set(side * 0.14, 0.88, 0);
+    g.add(leg);
+    legs.push(leg);
+    box(0.22, 0.06, 0.34, soleM, 0, -0.85, 0.03, leg);
+    box(0.20, 0.12, 0.30, shoeM, 0, -0.76, 0.03, leg);
+    box(0.20, 0.07, 0.03, mat(shade(c.shoes, 0.75), 0.5), 0, -0.76, 0.19, leg); // toe cap
     if (shorts) {
-      box(0.20, 0.26, 0.22, pantsM, x, 0.75, 0, g); // shorts leg
-      box(0.17, 0.46, 0.19, skin, x, 0.39, 0, g);   // bare lower leg
+      box(0.20, 0.26, 0.22, pantsM, 0, -0.13, 0, leg); // shorts leg
+      box(0.17, 0.46, 0.19, skin, 0, -0.49, 0, leg);   // bare lower leg
     } else {
-      box(0.20, 0.72, 0.22, pantsM, x, 0.52, 0, g); // full sweatpants leg
-      box(0.21, 0.09, 0.23, pantsM, x, 0.20, 0, g); // ankle cuff
+      box(0.20, 0.72, 0.22, pantsM, 0, -0.36, 0, leg); // full sweatpants leg
+      box(0.21, 0.09, 0.23, pantsM, 0, -0.68, 0, leg); // ankle cuff
     }
   }
   // ---- Hips + belt ----
@@ -81,6 +85,7 @@ export function buildCharacter(cfg = {}) {
   box(0.14, 0.12, 0.02, mat(shade(c.shirt, 0.82), 0.9), -0.14, 1.38, 0.15, g); // chest pocket
   // ---- Arms: hang straight, slightly out from the body ----
   const longSleeve = c.sleeve === 'long';
+  const arms = [];
   for (const side of [-1, 1]) {
     const arm = new THREE.Group();
     // Arms overlap the torso by a solid 0.015 (was a 0.005 hairline touch
@@ -88,6 +93,7 @@ export function buildCharacter(cfg = {}) {
     arm.position.set(side * 0.325, 1.52, 0);
     arm.rotation.z = side * -0.05;
     g.add(arm);
+    arms.push(arm);
     if (longSleeve) {
       box(0.16, 0.40, 0.18, shirtM, 0, -0.20, 0, arm);
       box(0.17, 0.08, 0.19, shirtM, 0, -0.43, 0, arm); // cuff
@@ -197,6 +203,52 @@ export function buildCharacter(cfg = {}) {
     box(0.12, 0.14, 0.30, hairM, -0.27, 2.00, 0, g);
     box(0.12, 0.14, 0.30, hairM, 0.27, 2.00, 0, g);
   }
+  g.userData.arms = arms;
+  g.userData.legs = legs;
   g.userData.height = 2.07;
+  return g;
+}
+
+// Procedural animation (redo slice 5): arm/leg swing from the joints
+// buildCharacter exposes, plus a subtle breathing scale pulse. walk:
+// 0 = idle (breathing only), 1 = full walk swing. Only rotation.x is
+// touched, so the arms' resting outward lean (rotation.z) survives.
+export function animateCharacter(g, t, walk) {
+  const u = g.userData;
+  if (!u.arms || !u.legs) return;
+  if (u.baseScale === undefined) u.baseScale = g.scale.x;
+  const s = Math.sin(t * 8) * walk;
+  u.arms[0].rotation.x = s * 0.7;
+  u.arms[1].rotation.x = -s * 0.7;
+  u.legs[0].rotation.x = -s * 0.7;
+  u.legs[1].rotation.x = s * 0.7;
+  g.scale.setScalar(u.baseScale * (1 + Math.sin(t * 1.8) * 0.008));
+}
+
+// Worn-armor overlay (redo slice 5): blocky plates over the character —
+// helmet, chestplate, shoulder pads, leg plates. Colors match the armor
+// icons (stone gray, iron silver). Every plate sits proud of the body
+// so nothing z-fights. Lobby/customize only — first person never sees
+// the body, and Darkened never wear it.
+export function buildArmorOverlay(armorId) {
+  const plate = armorId === 'armor_iron' ? 0xc8ccd2 : 0x8a8d92;
+  const line = armorId === 'armor_iron' ? 0x7d8288 : 0x5c5f64;
+  const g = new THREE.Group();
+  const pm = mat(plate, 0.5), lm = mat(line, 0.6);
+  // Helmet: crown + sides + back, sized to cover most hair; the face
+  // stays open so the character keeps its identity.
+  box(0.50, 0.14, 0.48, pm, 0, 2.17, 0, g);
+  box(0.05, 0.34, 0.46, pm, -0.245, 2.06, 0, g);
+  box(0.05, 0.34, 0.46, pm, 0.245, 2.06, 0, g);
+  box(0.48, 0.34, 0.05, pm, 0, 2.06, -0.225, g);
+  // Chestplate: 0.02 proud of the torso on all sides, trim at the waist.
+  box(0.56, 0.60, 0.32, pm, 0, 1.28, 0, g);
+  box(0.56, 0.08, 0.34, lm, 0, 1.02, 0, g);
+  // Shoulder pads: static caps over the arm pivots (arms swing beneath).
+  box(0.20, 0.10, 0.22, pm, -0.325, 1.57, 0, g);
+  box(0.20, 0.10, 0.22, pm, 0.325, 1.57, 0, g);
+  // Leg plates over the upper legs.
+  box(0.22, 0.40, 0.24, pm, -0.14, 0.55, 0, g);
+  box(0.22, 0.40, 0.24, pm, 0.14, 0.55, 0, g);
   return g;
 }
