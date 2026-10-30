@@ -252,6 +252,17 @@ async function initScene(onProgress) {
   scene.add(sun); scene.add(sun.target);
   scene.userData.sun = sun;
   scene.userData.sky = sky;
+  // Red Sun (2026-10-30): the normal sky has no sun disc (only a
+  // directional light), so the Flipped gets its own visible red sun —
+  // a bright disc + faint halo that follows the player like the dome
+  // and always faces the camera. Flipped-only; hidden anywhere else.
+  const redSun = new THREE.Group();
+  const redHalo = new THREE.Mesh(new THREE.CircleGeometry(90, 32), new THREE.MeshBasicMaterial({ color: 0xff3300, transparent: true, opacity: 0.25, fog: false }));
+  redHalo.position.z = -1;
+  const redDisc = new THREE.Mesh(new THREE.CircleGeometry(45, 32), new THREE.MeshBasicMaterial({ color: 0xff1a1a, fog: false }));
+  redSun.add(redHalo); redSun.add(redDisc);
+  redSun.visible = false;
+  scene.add(redSun); scene.userData.redSun = redSun;
   scene.userData.hemi = hemi;
 
   world = await buildWorld(scene, W.seed, onProgress, W.dim === 'flipped' ? { mirror: true } : {});
@@ -787,6 +798,7 @@ function spawnDarkened() {
   const h = groundY(x, z);
   if (h < 0.8) return; // never in water
   const group = buildCharacter(S.char);
+  group.scale.setScalar(1.5); // bigger + stronger (2026-10-30 buff)
   const shadowM = new THREE.MeshStandardMaterial({ color: 0x0a0a14, roughness: 1 });
   const eyeM = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 2 });
   group.traverse((m) => {
@@ -797,7 +809,7 @@ function spawnDarkened() {
   group.position.set(x, h, z);
   group.rotation.y = Math.atan2(P.pos.x - x, P.pos.z - z);
   scene.add(group);
-  darkened.push({ group, hp: 12, lastHit: 0, poisonUntil: 0, poisonAcc: 0 });
+  darkened.push({ group, hp: 30, lastHit: 0, poisonUntil: 0, poisonAcc: 0, nextTeleport: performance.now() + 10000 + Math.random() * 10000 });
   chatMsg('System', 'Something moves in the dark…', true);
 }
 function killDarkened(d) {
@@ -852,9 +864,20 @@ function updateDarkened(dt) {
       d.group.position.z += (dz / dist) * 5 * dt;
       d.group.position.y = groundY(d.group.position.x, d.group.position.z);
     }
-    if (dist < 2.5 && !P.dead && now - d.lastHit > 1200) {
+    if (dist < 3.5 && !P.dead && now - d.lastHit > 1200) {
       d.lastHit = now;
-      hurt(8, 'Darkened');
+      hurt(14, 'Darkened');
+    }
+    // Teleport (2026-10-30): every 10–20s a Darkened blinks to a spot
+    // 6–10 units from you — only while it's already hunting you
+    // (within 50) and not already on top of you (past 8). Water
+    // landings are skipped, so it never blinks into the sea.
+    if (now > d.nextTeleport && dist < 50 && dist > 8 && !P.dead) {
+      d.nextTeleport = now + 10000 + Math.random() * 10000;
+      const tang = Math.random() * Math.PI * 2, tdist = 6 + Math.random() * 4;
+      const tx = P.pos.x + Math.cos(tang) * tdist, tz = P.pos.z + Math.sin(tang) * tdist;
+      const th = groundY(tx, tz);
+      if (th >= 0.8) d.group.position.set(tx, th, tz);
     }
   }
 }
@@ -922,6 +945,16 @@ function loop() {
   // covers island diameter (2150) + dome radius (700) with margin.
   const sky = scene.userData.sky;
   if (sky) sky.position.set(P.pos.x, 0, P.pos.z);
+  // Red Sun follow: fixed sky direction, ~510 units out (inside the
+  // 700-radius dome), facing the player; visible only in The Flipped.
+  const redSun = scene.userData.redSun;
+  if (redSun) {
+    redSun.visible = W?.dim === 'flipped';
+    if (redSun.visible) {
+      redSun.position.set(P.pos.x + 150, P.pos.y + 280, P.pos.z - 400);
+      redSun.lookAt(P.pos.x, P.pos.y, P.pos.z);
+    }
+  }
   renderer.render(scene, camera);
   saveTimer += dt;
   if (saveTimer > 10) { saveTimer = 0; saveGame(); }
@@ -1437,7 +1470,7 @@ function findTarget() {
       consider(p.x + 2.60 * cx + 0.30 * sx, p.y + 0.8, p.z - 2.60 * sx + 0.30 * cx, 0.9, { kind: 'placed', ref: p });
     }
   }
-  for (const d of darkened) consider(d.group.position.x, d.group.position.y + 1.1, d.group.position.z, 1.2, { kind: 'darkened', ref: d });
+  for (const d of darkened) consider(d.group.position.x, d.group.position.y + 1.65, d.group.position.z, 1.8, { kind: 'darkened', ref: d });
   for (const car of cars) if (!car.broken) consider(car.group.position.x, car.group.position.y + 0.8, car.group.position.z, 2.1, { kind: 'car', ref: car });
   for (const pl of crops) consider(pl.x, groundY(pl.x, pl.z) + 0.3, pl.z, 0.65, { kind: 'crop', ref: pl });
   for (const d of drops) consider(d.x, d.mesh.position.y + 0.2, d.z, 0.8, { kind: 'drop', ref: d });
@@ -1506,7 +1539,7 @@ function targetBasePos(t) {
     case 'drop': return { x: t.ref.x, z: t.ref.z, r: 0.6 };
     case 'chest': return { x: t.ref.x, z: t.ref.z, r: 1.1 };
     case 'car': return { x: t.ref.group.position.x, z: t.ref.group.position.z, r: 2.4 };
-    case 'darkened': return { x: t.ref.group.position.x, z: t.ref.group.position.z, r: 1.2 };
+    case 'darkened': return { x: t.ref.group.position.x, z: t.ref.group.position.z, r: 1.8 };
     case 'ground': return { x: t.x, z: t.z, r: 0.7 };
     case 'placed': return { x: t.ref.x, z: t.ref.z, r: 1.8 };
     case 'crop': return { x: t.ref.x, z: t.ref.z, r: 0.7 };

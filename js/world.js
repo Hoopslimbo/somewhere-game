@@ -436,7 +436,7 @@ function canonicalFor(mesh) {
 
 // Collect one detached tree proxy's parts into shared buckets.
 // No rand() is consumed here; call order and counts are unchanged.
-function collectTreeParts(group, bucketMap, tree) {
+function collectTreeParts(group, bucketMap, tree, mirror = false) {
   group.updateMatrixWorld(true);
   tree.parts = [];
   group.traverse((obj) => {
@@ -454,7 +454,9 @@ function collectTreeParts(group, bucketMap, tree) {
     const scaleMatrix = new THREE.Matrix4().makeScale(scale.x, scale.y, scale.z);
     const part = { bucketKey: bkey, proxyMesh: obj, scaleMatrix, mesh: null, index: -1 };
     const matrix = new THREE.Matrix4().multiplyMatrices(obj.matrixWorld, scaleMatrix);
-    bucket.items.push({ matrix, color: obj.material.color.clone(), part });
+    const partCol = obj.material.color.clone();
+    if (mirror) invertColor(partCol);
+    bucket.items.push({ matrix, color: partCol, part });
     tree.parts.push(part);
   });
 }
@@ -559,6 +561,13 @@ function lantern(scene, x, z, seed) {
   const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 8), MATS.lantern);
   bulb.position.set(x, h + 1.8, z); scene.add(bulb);
 }
+
+// Flipped colors (2026-10-30): in The Flipped every terrain color is
+// replaced by its opposite (RGB invert) — green grass reads magenta,
+// sand reads dark blue, snow reads near-black — instead of the world
+// just looking darker under the frozen night. Pure transform, zero
+// rand() consumed, so generation and saves are untouched.
+function invertColor(c) { c.r = 1 - c.r; c.g = 1 - c.g; c.b = 1 - c.b; return c; }
 
 export async function buildWorld(scene, seed, onProgress, opts = {}) {
   // Progress fractions below are overall (0..1) estimates per phase,
@@ -672,6 +681,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     colors[i * 3 + 1] = Math.min(1, Math.max(0, col.g + j));
     colors[i * 3 + 2] = Math.min(1, Math.max(0, col.b + j));
   }
+  if (mirror) for (let i = 0; i < colors.length; i++) colors[i] = 1 - colors[i];
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   if (mirror) {
     // Mirror the terrain in X: negate every vertex, flip the winding
@@ -697,7 +707,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   // fixed above with smooth shading noise.
   const sea = new THREE.Mesh(
     new THREE.PlaneGeometry(SIZE * 3, SIZE * 3),
-    new THREE.MeshStandardMaterial({ color: 0x2f7fc4, transparent: true, opacity: 0.85, roughness: 0.15, metalness: 0.1 })
+    new THREE.MeshStandardMaterial({ color: mirror ? 0xd0803b : 0x2f7fc4, transparent: true, opacity: 0.85, roughness: 0.15, metalness: 0.1 })
   );
   sea.rotation.x = -Math.PI / 2; sea.position.y = SEA; scene.add(sea);
 
@@ -749,7 +759,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     // other field is unchanged, so findTarget/collideWorld work
     // untouched.
     const tree = { group, x: mx(x), z, h, hp: 3, kind: form, trunkH: trunkH * s, radius: 0.6 * s, scale: s, parts: [] };
-    collectTreeParts(group, treeBuckets, tree);
+    collectTreeParts(group, treeBuckets, tree, mirror);
     trees.push(tree);
   }
   buildTreeInstancedMeshes(scene, treeBuckets);
@@ -942,7 +952,9 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     dummy.scale.set(bsx, bsy, bsz);
     dummy.updateMatrix();
     bushes.setMatrixAt(bi, dummy.matrix);
-    bushes.setColorAt(bi, bushCol.setHSL(0.29 + rand() * 0.06, 0.45, 0.24 + rand() * 0.10));
+    bushCol.setHSL(0.29 + rand() * 0.06, 0.45, 0.24 + rand() * 0.10);
+    if (mirror) invertColor(bushCol);
+    bushes.setColorAt(bi, bushCol);
     // Collision record (2026-10-29: bushes looked like solid lumps but
     // had no collision, so you could phase straight through them).
     // Same rand() calls, same order — generation is untouched.
@@ -983,6 +995,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     grass.setMatrixAt(gi, dummy.matrix);
     if (b === 'desert') grassCol.setHSL(0.13, 0.45, 0.42 + rand() * 0.12);
     else grassCol.setHSL(0.28 + rand() * 0.05, 0.5, 0.30 + rand() * 0.15);
+    if (mirror) invertColor(grassCol);
     grass.setColorAt(gi, grassCol);
     gi++;
   }
@@ -1009,7 +1022,9 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     dummy.rotation.set(0, 0, 0); dummy.scale.setScalar(0.8 + rand() * 0.6);
     dummy.updateMatrix();
     flowers.setMatrixAt(fi, dummy.matrix);
-    flowers.setColorAt(fi, tmp.set(flowerCols[Math.floor(rand() * flowerCols.length)]));
+    tmp.set(flowerCols[Math.floor(rand() * flowerCols.length)]);
+    if (mirror) invertColor(tmp);
+    flowers.setColorAt(fi, tmp);
     fi++;
   }
   flowers.count = fi;
@@ -1047,6 +1062,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     if (b === 'desert') pebCol.setHSL(0.11, 0.4, 0.45 + rand() * 0.15);
     else if (b === 'snowy' || b === 'caved') pebCol.setHSL(0.6, 0.05, 0.55 + rand() * 0.25);
     else pebCol.setHSL(0.08, 0.12, 0.35 + rand() * 0.2);
+    if (mirror) invertColor(pebCol);
     pebbles.setColorAt(pi, pebCol);
     pi++;
   }
@@ -1080,6 +1096,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     dummy.rotation.set(-Math.PI / 2, 0, rand() * Math.PI);
     dummy.scale.set(s, s, s);
     dummy.updateMatrix();
+    if (mirror) invertColor(discCol);
     dirtItems.push({ matrix: dummy.matrix.clone(), color: discCol });
   }
   if (dirtItems.length) {
