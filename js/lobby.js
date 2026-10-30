@@ -550,7 +550,7 @@ async function renderThumb(w) {
   scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x3d5a34, 0.95));
   const sun = new THREE.DirectionalLight(0xfff2cc, 1.5);
   sun.position.set(60, 90, 30); scene.add(sun);
-  const built = await buildWorld(scene, w.seed, null, { light: true });
+  const built = await buildWorld(scene, w.seed, null, { light: true, gen: w.genVersion });
   const sp = built.spawn;
   const cam = new THREE.PerspectiveCamera(55, 320 / 180, 0.1, 1500);
   cam.position.set(sp.x + 26, sp.y + 20, sp.z + 26);
@@ -877,10 +877,10 @@ $('world-create').onclick = () => {
   const seed = parseSeed($('world-seed').value);
   if (dialogIsServer) {
     const invited = [...document.querySelectorAll('#server-invite-list input:checked')].map((cb) => cb.value);
-    S.servers.push({ id: uid(), name, seed, members: 1, invited, owner: S.session ? S.session.username : '', keepInv: false, friendly: true });
+    S.servers.push({ id: uid(), name, seed, members: 1, invited, owner: S.session ? S.session.username : '', keepInv: false, friendly: true, genVersion: 'v2' });
     save('somewhere_servers', S.servers); renderServers();
   } else {
-    const nw = { id: uid(), name, seed, keepInv: $('world-keepinv').checked, friendly: $('world-friendly').checked, created: Date.now(), userCreated: true };
+    const nw = { id: uid(), name, seed, keepInv: $('world-keepinv').checked, friendly: $('world-friendly').checked, created: Date.now(), userCreated: true, genVersion: 'v2' };
     S.worlds.push(nw);
     save('somewhere_worlds', S.worlds); renderWorlds();
     queueThumb(nw); // thumbnail renders in the background; creation stays instant
@@ -903,7 +903,7 @@ $('btn-play').onclick = () => {
   const w = S.worlds.find((x) => x.id === S.selectedWorld);
   const s = S.servers.find((x) => x.id === S.selectedServer);
   if (w) { w.lastPlayed = Date.now(); save('somewhere_worlds', S.worlds); }
-  const world = w || { id: s.id, name: s.name, seed: s.seed ?? 777, keepInv: s.keepInv ?? false, friendly: s.friendly ?? true };
+  const world = w || { id: s.id, name: s.name, seed: s.seed ?? 777, keepInv: s.keepInv ?? false, friendly: s.friendly ?? true, genVersion: s.genVersion };
   stopLobbyLoop();
   $('lobby-screen').classList.add('hidden');
   $('game-screen').classList.remove('hidden');
@@ -1063,7 +1063,7 @@ function renderInvites() {
     row.querySelector('.accept')?.addEventListener('click', () => {
       save('somewhere_invites', invites.filter((x) => x.id !== inv.id));
       if (inv.server && !S.servers.some((s) => s.name === inv.server)) {
-        S.servers.push({ id: uid(), name: inv.server, seed: Math.floor(Math.random() * 2147483647), members: 1, invited: [], owner: inv.from || '', keepInv: false, friendly: true });
+        S.servers.push({ id: uid(), name: inv.server, seed: Math.floor(Math.random() * 2147483647), members: 1, invited: [], owner: inv.from || '', keepInv: false, friendly: true, genVersion: 'v2' });
         save('somewhere_servers', S.servers); renderServers();
       }
       renderInvites();

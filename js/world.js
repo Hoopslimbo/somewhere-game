@@ -51,8 +51,42 @@ export const SEA = 0;
 // parts of biomes, NOT as generated structures — so there is no carve
 // system at all now. heightAt is just the base terrain; mountains are
 // solid. The 'caved' biome (less snow, rockier) stays as terrain.
-export function heightAt(x, z, seed) {
-  return baseHeightAt(x, z, seed);
+export function heightAt(x, z, seed, gen = 'v1') {
+  // Gen dispatch (redo slice 8): worlds without a gen flag — every
+  // world created before this slice — default to v1, so every old call
+  // site and every old world renders byte-identical. New worlds pass
+  // 'v2' and get the detailed terrain below.
+  return gen === 'v2' ? heightAtV2(x, z, seed) : baseHeightAt(x, z, seed);
+}
+// Gen v2 terrain (redo slice 8): river channels, lake widenings,
+// stepped cliffs, beach ripples — layered on the v1 height, so v2
+// islands keep the v1 silhouette and biome layout, only more detailed.
+// Pure fbm transforms, zero rand(), so v2 worlds are deterministic.
+function heightAtV2(x, z, seed) {
+  let h = baseHeightAt(x, z, seed);
+  // Rivers: a narrow band where slow river noise crosses its middle.
+  const rv = fbm(x * 0.002 + 500, z * 0.002, seed + 51);
+  const river = 1 - Math.abs(rv * 2 - 1); // 0..1, peaks at rv = 0.5
+  const carve = sstep(0.90, 0.97, river);
+  // Lakes: wide depressions where lake noise is high near a river band,
+  // so lakes read as widened river stretches, not random pits.
+  const lk = fbm(x * 0.003 + 800, z * 0.003, seed + 61);
+  const lake = sstep(0.68, 0.82, lk) * sstep(0.55, 0.75, river);
+  h -= carve * 5 + lake * 4;
+  // Cliffs: stepped terracing on high ground where cliff noise is high.
+  if (h > 5) {
+    const cl = sstep(0.62, 0.78, fbm(x * 0.004 + 400, z * 0.004, seed + 71));
+    if (cl > 0) {
+      const terraced = Math.floor(h / 4) * 4 + (h % 4) * 0.3;
+      h = h * (1 - cl * 0.6) + terraced * cl * 0.6;
+    }
+  }
+  // Beach ripples: gentle sand waves just above the waterline.
+  if (h > -0.5 && h < 1.5) {
+    const edge = Math.min(1, Math.min(h + 0.5, 1.5 - h) / 0.5);
+    h += (fbm(x * 0.05, z * 0.05, seed + 81) - 0.5) * 0.6 * edge;
+  }
+  return h;
 }
 function baseHeightAt(x, z, seed) {
   const r = Math.hypot(x, z);
@@ -81,10 +115,10 @@ function baseHeightAt(x, z, seed) {
   h += 30 * Math.exp(-(md * md) / (2 * 269 * 269)) * (0.7 + 0.3 * fbm(x * 0.01, z * 0.01, seed + 31));
   return h * edge - 3.2;
 }
-export function slopeAt(x, z, seed) {
+export function slopeAt(x, z, seed, gen = 'v1') {
   const e = 2;
-  const dx = heightAt(x + e, z, seed) - heightAt(x - e, z, seed);
-  const dz = heightAt(x, z + e, seed) - heightAt(x, z - e, seed);
+  const dx = heightAt(x + e, z, seed, gen) - heightAt(x - e, z, seed, gen);
+  const dz = heightAt(x, z + e, seed, gen) - heightAt(x, z - e, seed, gen);
   return Math.hypot(dx, dz) / (2 * e);
 }
 export function regionAt(x, z, seed) {
@@ -118,28 +152,28 @@ export function cavedHotspot(x, z, seed, h) {
   const md = Math.hypot(x - mx, z - mz);
   return md >= 122 && md < 269;
 }
-export function biomeAt(x, z, seed) {
-  const h = heightAt(x, z, seed);
+export function biomeAt(x, z, seed, gen = 'v1') {
+  const h = heightAt(x, z, seed, gen);
   const r = regionAt(x, z, seed);
   const caveN = fbm(x * 0.006 + 300, z * 0.006, seed);
   if (cavedHotspot(x, z, seed, h)) return 'caved';
   return biomeFrom(h, r, caveN);
 }
-export function findSpawn(seed) {
+export function findSpawn(seed, gen = 'v1') {
   let best = null;
   for (let r = 0; r < 140; r += 4) {
     for (let a = 0; a < 16; a++) {
       const x = Math.cos(a / 16 * Math.PI * 2) * r;
       const z = Math.sin(a / 16 * Math.PI * 2) * r;
-      const h = heightAt(x, z, seed);
-      if (biomeAt(x, z, seed) !== 'plains') continue;
-      const sl = slopeAt(x, z, seed);
+      const h = heightAt(x, z, seed, gen);
+      if (biomeAt(x, z, seed, gen) !== 'plains') continue;
+      const sl = slopeAt(x, z, seed, gen);
       if (h > 1.5 && h < 6 && sl < 0.4) return { x, z, y: h };
       if (h > 1 && h < 8 && sl < 0.6 && (!best || sl < best.sl)) best = { x, z, y: h, sl };
     }
   }
   if (best) return { x: best.x, z: best.z, y: best.y };
-  return { x: 0, z: 0, y: Math.max(1.5, heightAt(0, 0, seed)) };
+  return { x: 0, z: 0, y: Math.max(1.5, heightAt(0, 0, seed, gen)) };
 }
 
 // ---- Sky dome (gradient, updated by day/night) ----
@@ -594,11 +628,11 @@ function jitteredRockGeo(s, rand) {
   return geo;
 }
 
-function clutterAround(scene, cx, cz, seed, rand, items) {
+function clutterAround(scene, cx, cz, seed, rand, items, gen = 'v1') {
   for (let i = 0; i < items; i++) {
     const a = rand() * Math.PI * 2, d = 1.6 + rand() * 2.0;
     const x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d;
-    const h = heightAt(x, z, seed);
+    const h = heightAt(x, z, seed, gen);
     if (rand() < 0.5) {
       const s = 0.5 + rand() * 0.35;
       const crate = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), pick(MATS.wood, rand));
@@ -611,8 +645,8 @@ function clutterAround(scene, cx, cz, seed, rand, items) {
     }
   }
 }
-function lantern(scene, x, z, seed) {
-  const h = heightAt(x, z, seed);
+function lantern(scene, x, z, seed, gen = 'v1') {
+  const h = heightAt(x, z, seed, gen);
   const post = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 1.7, 6), MATS.snag);
   post.position.set(x, h + 0.85, z); post.castShadow = true; scene.add(post);
   const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 8), MATS.lantern);
@@ -647,6 +681,9 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   // consumption identical, so the mirrored world is a true replica.
   const mirror = !!opts.mirror;
   const mx = (x) => mirror ? -x : x;
+  // Generation version (redo slice 8): 'v1' (default — every world
+  // created before this slice, byte-identical) or 'v2' (new worlds).
+  const gen = opts.gen || 'v1';
   const SIZE = light ? 900 : 1862, SEG = light ? 480 : 979;
   const TREE_N = light ? 1550 : 6600, ROCK_N = light ? 490 : 2100,
     BUSH_N = light ? 1260 : 5400, BUSH_CAP = light ? 532 : 2280,
@@ -661,7 +698,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   reportProgress(onProgress, 'Terrain', 0);
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
-    pos.setY(i, heightAt(x, z, seed));
+    pos.setY(i, heightAt(x, z, seed, gen));
     if ((i + 1) % 20000 === 0) {
       reportProgress(onProgress, 'Terrain', 0.30 * (i + 1) / pos.count);
       await yieldToBrowser();
@@ -725,6 +762,16 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     const slope = 1 - normals.getY(i);
     if (slope > 0.28 && h > 1.3) col.lerp(tmp.set(0x7a756e), Math.min(0.85, (slope - 0.28) * 1.6)); // exposed rock on steeps
     if (slope > 0.45 && h > 1.3) col.lerp(tmp.set(0x7a756e), Math.min(0.5, (slope - 0.45) * 1.2)); // cliffs shed snow
+    // Gen v2 ground detail (redo slice 8): dune striping in the desert,
+    // snow sparkle in snowy ground. Tiny lightness shifts only; they
+    // ride the mirror inversion below like every other vertex color.
+    if (gen === 'v2') {
+      if (b === 'desert') col.offsetHSL(0, 0, Math.sin(x * 0.5) * 0.02);
+      else if (b === 'snowy') {
+        const hh = Math.sin(x * 12.9898 + z * 78.233 + seed) * 43758.5453;
+        if (hh - Math.floor(hh) > 0.9) col.offsetHSL(0, 0, 0.08);
+      }
+    }
     // Smooth shading detail: the old per-integer-cell hash jitter changed
     // abruptly between neighbouring vertices and read as a blocky grid.
     // The 2026-10-29 redo kept that grid alive a different way: its
@@ -773,7 +820,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     const z = (hy / (HM - 1) - 0.5) * SIZE;
     for (let hx = 0; hx < HM; hx++) {
       const x = (hx / (HM - 1) - 0.5) * SIZE;
-      hmData[hy * HM + hx] = Math.max(0, Math.min(255, Math.round((heightAt(x, z, seed) + 4) / 64 * 255)));
+      hmData[hy * HM + hx] = Math.max(0, Math.min(255, Math.round((heightAt(x, z, seed, gen) + 4) / 64 * 255)));
     }
     if (hy % 32 === 31) await yieldToBrowser();
   }
@@ -856,7 +903,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
 
   const rand = mulberry(seed * 7919 + 13);
   const trees = [], rocks = [], chests = [], interactables = [];
-  const spawn = findSpawn(seed);
+  const spawn = findSpawn(seed, gen);
   // Tree parts are collected into shared instancing buckets here and
   // allocated once after the loop (see buildTreeInstancedMeshes).
   // Nothing in this collection consumes rand().
@@ -872,10 +919,10 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
       await yieldToBrowser();
     }
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
-    const h = heightAt(x, z, seed);
+    const h = heightAt(x, z, seed, gen);
     if (h < 0.8) continue;
-    const b = biomeAt(x, z, seed);
-    const sl = slopeAt(x, z, seed);
+    const b = biomeAt(x, z, seed, gen);
+    const sl = slopeAt(x, z, seed, gen);
     const grove = fbm(x * 0.01 + 500, z * 0.01, seed);
     if (b === 'desert') continue;
     if (b === 'plains' && grove < 0.52) continue; // clearings between groves
@@ -924,11 +971,11 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
       await yieldToBrowser();
     }
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
-    const h = heightAt(x, z, seed);
+    const h = heightAt(x, z, seed, gen);
     if (h < 0.8) continue;
-    const sl = slopeAt(x, z, seed);
+    const sl = slopeAt(x, z, seed, gen);
     if (sl < 0.7 && h < 14 && rand() < 0.45) continue; // rocks favor steeps + heights
-    const iron = biomeAt(x, z, seed) === 'caved' ? rand() < 0.45 : rand() < 0.12;
+    const iron = biomeAt(x, z, seed, gen) === 'caved' ? rand() < 0.45 : rand() < 0.12;
     const s = 0.5 + rand() * 0.9;
     const rock = new THREE.Mesh(jitteredRockGeo(s, rand), iron ? MATS.iron : pick(MATS.stone, rand));
     rock.position.set(mx(x), h + s * 0.4, z); rock.castShadow = true;
@@ -968,7 +1015,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   reportProgress(onProgress, 'Ground stones', 0.75);
   for (let i = 0; i < (light ? 0 : 240); i++) {
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
-    const h = heightAt(x, z, seed);
+    const h = heightAt(x, z, seed, gen);
     if (h < 0.8) continue;
     const s = 0.20 + rand() * 0.16;
     const st = new THREE.Mesh(jitteredRockGeo(s, rand), pick(MATS.stone, rand));
@@ -989,7 +1036,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     while (groundStones.length < 240 && fillAttempts < 2400) {
       fillAttempts++;
       const x = (randFill() - 0.5) * (SIZE - 20), z = (randFill() - 0.5) * (SIZE - 20);
-      const h = heightAt(x, z, seed);
+      const h = heightAt(x, z, seed, gen);
       if (h < 0.8) continue;
       const s = 0.20 + randFill() * 0.16;
       const st = new THREE.Mesh(jitteredRockGeo(s, randFill), pick(MATS.stone, randFill));
@@ -1017,7 +1064,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   reportProgress(onProgress, 'Chests', 0.77);
   for (let i = 0; i < (light ? 0 : 60); i++) {
     const x = (rand() - 0.5) * (SIZE - 40), z = (rand() - 0.5) * (SIZE - 40);
-    const h = heightAt(x, z, seed);
+    const h = heightAt(x, z, seed, gen);
     if (h < 0.8) continue;
     const grp = new THREE.Group();
     const woodM = MATS.chest;
@@ -1085,9 +1132,9 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
       await yieldToBrowser();
     }
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
-    const h = heightAt(x, z, seed);
+    const h = heightAt(x, z, seed, gen);
     if (h < 0.8) continue;
-    const b = biomeAt(x, z, seed);
+    const b = biomeAt(x, z, seed, gen);
     if (b === 'desert' || b === 'snowy') continue;
     dummy.position.set(mx(x), h + 0.2, z);
     dummy.rotation.set(0, rand() * Math.PI * 2, 0);
@@ -1126,9 +1173,9 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     let x, z;
     if (i < 130) { x = spawn.x + (rand() - 0.5) * 36; z = spawn.z + (rand() - 0.5) * 36; }
     else { x = (rand() - 0.5) * (SIZE - 20); z = (rand() - 0.5) * (SIZE - 20); }
-    const h = heightAt(x, z, seed);
+    const h = heightAt(x, z, seed, gen);
     if (h < 0.8) continue;
-    const b = biomeAt(x, z, seed);
+    const b = biomeAt(x, z, seed, gen);
     if (b === 'snowy' || b === 'caved') continue;
     dummy.position.set(mx(x), h + 0.12, z);
     dummy.rotation.set((rand() - 0.5) * 0.6, rand() * Math.PI * 2, (rand() - 0.5) * 0.6);
@@ -1158,9 +1205,9 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
       await yieldToBrowser();
     }
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
-    const h = heightAt(x, z, seed);
+    const h = heightAt(x, z, seed, gen);
     if (h < 0.8) continue;
-    if (biomeAt(x, z, seed) !== 'plains') continue;
+    if (biomeAt(x, z, seed, gen) !== 'plains') continue;
     dummy.position.set(mx(x), h + 0.32, z);
     dummy.rotation.set(0, 0, 0); dummy.scale.setScalar(0.8 + rand() * 0.6);
     dummy.updateMatrix();
@@ -1193,9 +1240,9 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     let x, z;
     if (i < 100) { x = spawn.x + (rand() - 0.5) * 36; z = spawn.z + (rand() - 0.5) * 36; }
     else { x = (rand() - 0.5) * (SIZE - 20); z = (rand() - 0.5) * (SIZE - 20); }
-    const h = heightAt(x, z, seed);
+    const h = heightAt(x, z, seed, gen);
     if (h < 0.8) continue;
-    const b = biomeAt(x, z, seed);
+    const b = biomeAt(x, z, seed, gen);
     dummy.position.set(mx(x), h + 0.05, z);
     dummy.rotation.set(rand() * 0.8, rand() * Math.PI * 2, rand() * 0.8);
     const ps = 0.06 + rand() * 0.16;
@@ -1228,11 +1275,11 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   for (let i = 0; i < DIRT_N; i++) {
     if (i > 0 && i % 1000 === 0) await yieldToBrowser();
     const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
-    const h = heightAt(x, z, seed);
+    const h = heightAt(x, z, seed, gen);
     if (h < 0.8) continue;
-    const b = biomeAt(x, z, seed);
+    const b = biomeAt(x, z, seed, gen);
     if (b === 'snowy' || b === 'caved') continue;
-    if (slopeAt(x, z, seed) > 0.35) continue; // flat ground only, so discs don't clip into slopes
+    if (slopeAt(x, z, seed, gen) > 0.35) continue; // flat ground only, so discs don't clip into slopes
     const s = 0.8 + rand() * 1.8;
     const discCol = new THREE.Color(0x6b4e2e);
     discCol.offsetHSL(0, 0, (rand() - 0.5) * 0.08);
@@ -1259,6 +1306,87 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     scene.add(dirt);
   }
 
+  // Gen v2 props (redo slice 8, NEW worlds only): fallen logs, mushrooms,
+  // shore reeds, snow drifts, beach shells. All instanced (5 extra draws,
+  // capped counts), all mirrored via mx() and color-inverted in the
+  // Flipped like every other prop. No collision, no interaction — pure
+  // ground detail. They run after every v1 loop and only when gen is
+  // v2, so the v1 rand() stream is untouched.
+  if (gen === 'v2') {
+    const v2Mesh = (geo, mat, items) => {
+      if (!items.length) return;
+      const m = new THREE.InstancedMesh(geo, mat, items.length);
+      items.forEach((it, idx) => { m.setMatrixAt(idx, it.matrix); m.setColorAt(idx, it.color); });
+      m.instanceMatrix.needsUpdate = true;
+      if (m.instanceColor) m.instanceColor.needsUpdate = true;
+      m.frustumCulled = false; scene.add(m);
+    };
+    const v2Col = (hex) => { const c = new THREE.Color(hex); if (mirror) invertColor(c); return c; };
+    const logs = [], caps = [], stems = [], reeds = [], drifts = [], shells = [];
+    const V2_N = light ? 1 : 4; // scale counts down for the lobby/light build
+    for (let i = 0; i < 40 * V2_N; i++) { // fallen logs, forest + plains
+      const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
+      const h = heightAt(x, z, seed, gen);
+      if (h < 0.8) continue;
+      const b = biomeAt(x, z, seed, gen);
+      if (b !== 'tallforest' && b !== 'plains') continue;
+      if (slopeAt(x, z, seed, gen) > 0.35) continue;
+      const len = 2 + rand() * 2, rad = 0.22 + rand() * 0.1;
+      dummy.position.set(mx(x), h + rad, z);
+      dummy.rotation.set(0, rand() * Math.PI, Math.PI / 2); // cylinder lies flat
+      dummy.scale.set(1, len, 1); dummy.updateMatrix();
+      logs.push({ matrix: dummy.matrix.clone(), color: v2Col(0x6b4226) });
+    }
+    for (let i = 0; i < 90 * V2_N; i++) { // mushrooms, forest floor
+      const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
+      const h = heightAt(x, z, seed, gen);
+      if (h < 0.8) continue;
+      const b = biomeAt(x, z, seed, gen);
+      if (b !== 'tallforest' && b !== 'plains') continue;
+      const s = 0.14 + rand() * 0.14;
+      dummy.position.set(mx(x), h + s * 1.4, z); dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(s, s * 0.6, s); dummy.updateMatrix();
+      caps.push({ matrix: dummy.matrix.clone(), color: v2Col(rand() < 0.5 ? 0xc23b2e : 0xe8ddc8) });
+      dummy.position.set(mx(x), h + s * 0.7, z); dummy.scale.set(s * 0.35, s * 1.4, s * 0.35);
+      dummy.updateMatrix();
+      stems.push({ matrix: dummy.matrix.clone(), color: v2Col(0xe8ddc8) });
+    }
+    for (let i = 0; i < 150 * V2_N; i++) { // shore reeds, water's edge
+      const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
+      const h = heightAt(x, z, seed, gen);
+      if (h < 0.3 || h > 1.5) continue;
+      const s = 1.2 + rand() * 0.8;
+      dummy.position.set(mx(x), h + s / 2, z); dummy.rotation.set(0, rand() * Math.PI, 0);
+      dummy.scale.set(1, s, 1); dummy.updateMatrix();
+      reeds.push({ matrix: dummy.matrix.clone(), color: v2Col(0x7a9a3e) });
+    }
+    for (let i = 0; i < 90 * V2_N; i++) { // snow drifts, snowy ground
+      const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
+      const h = heightAt(x, z, seed, gen);
+      if (h < 1.3) continue;
+      if (biomeAt(x, z, seed, gen) !== 'snowy') continue;
+      const s = 0.8 + rand() * 1.4;
+      dummy.position.set(mx(x), h + 0.08, z); dummy.rotation.set(0, rand() * Math.PI, 0);
+      dummy.scale.set(s, s * 0.25, s); dummy.updateMatrix();
+      drifts.push({ matrix: dummy.matrix.clone(), color: v2Col(0xf2f6fa) });
+    }
+    for (let i = 0; i < 100 * V2_N; i++) { // beach shells, sand band
+      const x = (rand() - 0.5) * (SIZE - 20), z = (rand() - 0.5) * (SIZE - 20);
+      const h = heightAt(x, z, seed, gen);
+      if (h < -0.2 || h > 1.0) continue;
+      const s = 0.08 + rand() * 0.08;
+      dummy.position.set(mx(x), h + 0.05, z); dummy.rotation.set(0, rand() * Math.PI, 0);
+      dummy.scale.set(s, s * 0.4, s); dummy.updateMatrix();
+      shells.push({ matrix: dummy.matrix.clone(), color: v2Col(rand() < 0.5 ? 0xffffff : 0xf2c4c4) });
+    }
+    v2Mesh(new THREE.CylinderGeometry(1, 1, 1, 8), new THREE.MeshStandardMaterial({ roughness: 0.95 }), logs);
+    v2Mesh(new THREE.SphereGeometry(1, 10, 8), new THREE.MeshStandardMaterial({ roughness: 0.8 }), caps);
+    v2Mesh(new THREE.CylinderGeometry(1, 1, 1, 6), new THREE.MeshStandardMaterial({ roughness: 0.9 }), stems);
+    v2Mesh(new THREE.CylinderGeometry(0.02, 0.05, 1, 5), new THREE.MeshStandardMaterial({ roughness: 0.9 }), reeds);
+    v2Mesh(new THREE.SphereGeometry(1, 12, 8), new THREE.MeshStandardMaterial({ roughness: 0.9 }), drifts);
+    v2Mesh(new THREE.SphereGeometry(1, 8, 6), new THREE.MeshStandardMaterial({ roughness: 0.8 }), shells);
+  }
+
   // Gold infinite bench (unbreakable, unmovable) near spawn
   const bench = new THREE.Group();
   const bTop = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.25, 0.9), MATS.gold);
@@ -1279,7 +1407,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   // Mirror: the bench's height comes from the UNmirrored coordinate
   // (mirrored terrain height at -x equals original height at x), while
   // its x lands mirrored. Spawn itself is negated just below.
-  bench.position.set(mx(spawn.x - 4), heightAt(spawn.x - 4, spawn.z + 3, seed), spawn.z + 3);
+  bench.position.set(mx(spawn.x - 4), heightAt(spawn.x - 4, spawn.z + 3, seed, gen), spawn.z + 3);
   // Gold-trimmed tool board behind the gold bench (decorative, like the
   // workbench pegboard — keeps the gold bench distinct and unmistakable)
   const gBoard = new THREE.Mesh(new THREE.BoxGeometry(2.8, 1.5, 0.08), MATS.gold);
@@ -1306,8 +1434,8 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   // coordinates, which would float or sink on mirrored ground, so the
   // Flipped skips those decorations — the gold bench marks spawn.
   if (!mirror) {
-    lantern(scene, spawn.x - 6, spawn.z + 4, seed);
-    clutterAround(scene, bench.position.x, bench.position.z, seed, rand, 2);
+    lantern(scene, spawn.x - 6, spawn.z + 4, seed, gen);
+    clutterAround(scene, bench.position.x, bench.position.z, seed, rand, 2, gen);
   }
   if (mirror) spawn.x = -spawn.x;
 

@@ -304,7 +304,7 @@ async function initScene(onProgress) {
   scene.add(stars); scene.userData.stars = stars;
   scene.userData.hemi = hemi;
 
-  world = await buildWorld(scene, W.seed, onProgress, W.dim === 'flipped' ? { mirror: true } : {});
+  world = await buildWorld(scene, W.seed, onProgress, W.dim === 'flipped' ? { mirror: true, gen: W.genVersion } : { gen: W.genVersion });
   initDebris(); // pooled chunk system (redo slice 4)
   const sp = world.spawn;
   P.pos.set(sp.x, sp.y, sp.z);
@@ -846,12 +846,12 @@ async function startPortalPreview(p) {
   // flipped, since the preview terrain is built mirrored too).
   const ax = flipped ? P.pos.x : (W.home?.x ?? P.pos.x);
   const az = flipped ? P.pos.z : ((W.home?.z ?? P.pos.z) + 2);
-  const gy = heightAt(flipped ? -ax : ax, az, W.seed);
+  const gy = heightAt(flipped ? -ax : ax, az, W.seed, W.genVersion);
   const cam = new THREE.PerspectiveCamera(62, 1, 0.1, 2000);
   cam.rotation.order = 'YXZ';
   const yawBase = p.group.rotation.y + Math.PI;
   try {
-    await buildWorld(pvScene, W.seed, null, { light: true, mirror: flipped });
+    await buildWorld(pvScene, W.seed, null, { light: true, mirror: flipped, gen: W.genVersion });
   } catch { disposePreviewScene(pvScene); return; }
   // A newer portal (or travel, or quit) replaced this one mid-build:
   // drop the orphaned preview instead of attaching it to a dead portal.
@@ -1246,7 +1246,7 @@ function updateDayNight() {
 // terrain's height/biome at (x, z) is the original's at (-x, z).
 const mx = (x) => (W && W.dim === 'flipped') ? -x : x;
 function groundY(x, z, yHint) {
-  const h = heightAt(mx(x), z, W.seed);
+  const h = heightAt(mx(x), z, W.seed, W.genVersion);
   // Caves REMOVED (2026-10-28): mountains are solid, so ground is just
   // the heightmap. yHint is kept in the signature for callers that
   // still pass it, but no longer changes anything.
@@ -1896,7 +1896,7 @@ function findTarget() {
 // natural walkable dirt plain dirt. 'snowy' from biomeAt already means
 // high elevation (h > 17), i.e. the mountain tops, not low snowy ground.
 function digYield(x, z) {
-  const b = biomeAt(mx(x), z, W.seed);
+  const b = biomeAt(mx(x), z, W.seed, W.genVersion);
   if (b === 'desert') return 'sandbag';
   if (b === 'snowy') return 'snowbag';
   return 'dirtbag';
@@ -1906,7 +1906,7 @@ function digYieldLabel(id) { return id === 'sandbag' ? 'Sand' : id === 'snowbag'
 // under a generated-structure footprint (interactables) or a placed
 // piece, never a planted crop plot.
 function isDiggableCell(x, z) {
-  if (heightAt(mx(x), z, W.seed) < 0.3) return false; // water, same convention as build placement
+  if (heightAt(mx(x), z, W.seed, W.genVersion) < 0.3) return false; // water, same convention as build placement
   for (const it of world.interactables) {
     const rad = (it.radius || 3) + 1;
     if (Math.hypot(it.x - x, it.z - z) < rad) return false;
@@ -2801,7 +2801,7 @@ function ghostAim() {
 function ghostValid(x, z) {
   const d = Math.hypot(x - P.pos.x, z - P.pos.z);
   if (d > 7) return false;
-  if (heightAt(mx(x), z, W.seed) < 0.3) return false; // not in water
+  if (heightAt(mx(x), z, W.seed, W.genVersion) < 0.3) return false; // not in water
   for (const t of world.trees) if (Math.hypot(t.x - x, t.z - z) < 1.6) return false;
   return true;
 }
