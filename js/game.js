@@ -303,6 +303,7 @@ async function initScene(onProgress) {
   scene.userData.hemi = hemi;
 
   world = await buildWorld(scene, W.seed, onProgress, W.dim === 'flipped' ? { mirror: true } : {});
+  initDebris(); // pooled chunk system (redo slice 4)
   const sp = world.spawn;
   P.pos.set(sp.x, sp.y, sp.z);
   P.vel.set(0, 0, 0);
@@ -1134,6 +1135,7 @@ function loop() {
   }
   updateCrops(dt);
   updateDrops(dt);
+  updateDebris(dt);
   updateCarsVisual(dt);
   updateLidAnims();
   updateFlipped(dt);
@@ -1713,6 +1715,103 @@ function updateViewmodel() {
   }
 }
 
+// ---------- Debris chunks (redo slice 4) ----------
+// Pooled instanced boxes implementing Liam's debris rule literally:
+// chunks fly out when something breaks, persist, fade after stopping.
+// Material conversion already exists as drops (capped at source) —
+// these are the visible chunks. One instanced draw, cap 100, zero
+// per-chunk meshes, zero per-frame allocation while idle.
+const DEBRIS_CAP = 100;
+let debrisMesh = null, debrisPool = [];
+const debrisDummy = new THREE.Object3D();
+const debrisTmpColor = new THREE.Color();
+function initDebris() {
+  debrisMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshStandardMaterial({ roughness: 0.9 }), DEBRIS_CAP);
+  debrisMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  debrisMesh.frustumCulled = false;
+  debrisPool = [];
+  for (let i = 0; i < DEBRIS_CAP; i++) {
+    debrisPool.push({ active: false, settled: false, fadeAt: 0, born: 0,
+      px: 0, py: 0, pz: 0, vx: 0, vy: 0, vz: 0, rx: 0, ry: 0, rz: 0,
+      wx: 0, wy: 0, wz: 0, s: 0.15 });
+    debrisDummy.position.set(0, -100, 0); debrisDummy.scale.setScalar(0.0001); debrisDummy.updateMatrix();
+    debrisMesh.setMatrixAt(i, debrisDummy.matrix);
+    debrisMesh.setColorAt(i, debrisTmpColor.set(0xffffff));
+  }
+  debrisMesh.instanceMatrix.needsUpdate = true;
+  if (debrisMesh.instanceColor) debrisMesh.instanceColor.needsUpdate = true;
+  scene.add(debrisMesh);
+}
+function spawnDebris(x, y, z, colorHex, count) {
+  if (!debrisMesh) return;
+  let spawned = 0;
+  // First pass: inactive or already-settled slots. Second pass: steal
+  // the oldest flying chunks, so a full pool still shows new breaks.
+  const falling = [];
+  for (let i = 0; i < DEBRIS_CAP && spawned < count; i++) {
+    const c = debrisPool[i];
+    if (c.active && !c.settled) { falling.push(i); continue; }
+    spawnDebrisAt(i, x, y, z, colorHex); spawned++;
+  }
+  falling.sort((a, b) => debrisPool[a].born - debrisPool[b].born);
+  for (const i of falling) {
+    if (spawned >= count) break;
+    spawnDebrisAt(i, x, y, z, colorHex); spawned++;
+  }
+  if (debrisMesh.instanceColor) debrisMesh.instanceColor.needsUpdate = true;
+}
+function spawnDebrisAt(i, x, y, z, colorHex) {
+  const c = debrisPool[i];
+  c.active = true; c.settled = false; c.born = performance.now();
+  c.px = x + (Math.random() - 0.5) * 0.6; c.py = y + Math.random() * 0.4; c.pz = z + (Math.random() - 0.5) * 0.6;
+  const a = Math.random() * Math.PI * 2, sp = 1.5 + Math.random() * 3;
+  c.vx = Math.cos(a) * sp; c.vz = Math.sin(a) * sp; c.vy = 2 + Math.random() * 3.5;
+  c.rx = Math.random() * 3; c.ry = Math.random() * 3; c.rz = Math.random() * 3;
+  c.wx = (Math.random() - 0.5) * 8; c.wy = (Math.random() - 0.5) * 8; c.wz = (Math.random() - 0.5) * 8;
+  c.s = 0.08 + Math.random() * 0.14;
+  debrisTmpColor.set(colorHex).offsetHSL(0, 0, (Math.random() - 0.5) * 0.1);
+  debrisMesh.setColorAt(i, debrisTmpColor);
+}
+function updateDebris(dt) {
+  if (!debrisMesh) return;
+  const now = performance.now();
+  let dirty = false;
+  for (let i = 0; i < DEBRIS_CAP; i++) {
+    const c = debrisPool[i];
+    if (!c.active) continue;
+    dirty = true;
+    if (!c.settled) {
+      c.vy -= 22 * dt;
+      c.px += c.vx * dt; c.py += c.vy * dt; c.pz += c.vz * dt;
+      c.rx += c.wx * dt; c.ry += c.wy * dt; c.rz += c.wz * dt;
+      const g = groundY(c.px, c.pz) + c.s * 0.5;
+      if (c.py <= g) { c.py = g; c.settled = true; c.fadeAt = now + 4000; }
+    } else if (now >= c.fadeAt) {
+      // Fade by shrinking over 1s, then deactivate.
+      const f = Math.max(0, 1 - (now - c.fadeAt) / 1000);
+      if (f <= 0) {
+        c.active = false;
+        debrisDummy.position.set(0, -100, 0); debrisDummy.scale.setScalar(0.0001); debrisDummy.updateMatrix();
+        debrisMesh.setMatrixAt(i, debrisDummy.matrix);
+        continue;
+      }
+      debrisDummy.position.set(c.px, c.py, c.pz);
+      debrisDummy.rotation.set(c.rx, c.ry, c.rz);
+      debrisDummy.scale.setScalar(c.s * f);
+      debrisDummy.updateMatrix();
+      debrisMesh.setMatrixAt(i, debrisDummy.matrix);
+      continue;
+    }
+    debrisDummy.position.set(c.px, c.py, c.pz);
+    debrisDummy.rotation.set(c.rx, c.ry, c.rz);
+    debrisDummy.scale.setScalar(c.s);
+    debrisDummy.updateMatrix();
+    debrisMesh.setMatrixAt(i, debrisDummy.matrix);
+  }
+  if (dirty) debrisMesh.instanceMatrix.needsUpdate = true;
+}
+
 // ---------- Targeting ----------
 let target = null;
 function findTarget() {
@@ -2049,6 +2148,8 @@ function chopTree(t, toolSlot) {
   if (!isTempStone) damageTool(toolSlot);
   if (t.hp <= 0) {
     sfx('break');
+    spawnDebris(t.x, (t.h || 0) + 1.5, t.z, 0x6b4226, 5);
+    spawnDebris(t.x, (t.h || 0) + 2.5, t.z, 0x3d7a32, 4);
     hideTreeInstances(t); // trees are instanced now — hide, don't remove a group
     world.trees = world.trees.filter((x) => x !== t);
     const wood = 2 + Math.floor(Math.random() * 3);
@@ -2083,6 +2184,7 @@ function mineRock(r, toolSlot) {
   damageTool(toolSlot);
   if (r.hp <= 0) {
     sfx('break');
+    spawnDebris(r.x, (r.h || 0) + 0.5, r.z, r.iron ? 0xc9ced6 : 0x7d7f83, 8);
     scene.remove(r.mesh);
     world.rocks = world.rocks.filter((x) => x !== r);
     if (r.iron) { dropItem('iron', 2, r.x, r.z); }
@@ -2109,6 +2211,8 @@ function hitPlaced(p, power) {
 }
 function smashPlaced(p) {
   sfx('break');
+  const debrisCol = { wall_wood: 0x8a5a2b, wall_brick: 0x8a7f70, wall_steel: 0x8a8d92, wall_ice: 0xcfe4f5 }[p.itemId] || 0x8a5a2b;
+  spawnDebris(p.x, (p.y || 0) + 0.5, p.z, debrisCol, 10);
   scene.remove(p.mesh);
   placed = placed.filter((x) => x !== p);
   // Debris gives back a few materials, never more than the piece was made of
