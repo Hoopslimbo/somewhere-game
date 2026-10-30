@@ -1212,7 +1212,9 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   pebbles.count = pi;
   pebbles.instanceMatrix.needsUpdate = true;
   if (pebbles.instanceColor) pebbles.instanceColor.needsUpdate = true;
-  pebbles.castShadow = true;
+  // Lobby perf (redo slice 6): pebble shadows are invisible at that size
+  // — pure waste in the 2048 shadow pass. Trees/bushes still cast.
+  pebbles.castShadow = false;
   scene.add(pebbles);
   // Dirt patch discs hugging the ground (plains / forest / desert)
   // Instanced like trees: one CircleGeometry(1, 12) + instanceColor,

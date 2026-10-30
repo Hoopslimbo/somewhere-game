@@ -145,6 +145,9 @@ function lobbyBuildProgress(label, frac) {
 // Hiding is idempotent: adding .hidden twice is a no-op.
 function onLobbyBuiltSettled() {
   $('boot-loading')?.classList.add('hidden');
+  // Thumbnails may now build in the background (redo slice 6) — after
+  // the panorama, so the two chunked builds never compete.
+  thumbsAllowed = true; pumpThumbs();
   // A world/server selected while the boot overlay was up (e.g. via
   // a restored selection path) gets its Play button only now.
   if (lobbyIslandReady && (S.selectedWorld || S.selectedServer)) $('btn-play')?.classList.remove('hidden');
@@ -203,9 +206,11 @@ async function initLobby3D() {
 function initLobby3DSetup() {
   const bgCanvas = $('lobby-bg');
   panoRenderer = new THREE.WebGLRenderer({ canvas: bgCanvas, antialias: true });
-  panoRenderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  // Lobby perf (redo slice 6): panorama at pixelRatio 1, shadows off
+  // outright (the old shadow camera was ±5, so they were ~absent anyway).
+  panoRenderer.setPixelRatio(Math.min(devicePixelRatio, 1));
   panoRenderer.setSize(innerWidth, innerHeight);
-  panoRenderer.shadowMap.enabled = true;
+  panoRenderer.shadowMap.enabled = false;
   panoRenderer.toneMapping = THREE.ACESFilmicToneMapping;
   panoRenderer.toneMappingExposure = 1.05;
   panoScene = new THREE.Scene();
@@ -215,7 +220,7 @@ function initLobby3DSetup() {
   panoScene.fog = new THREE.Fog(0xcfe4f5, 130, 380);
   panoScene.add(new THREE.HemisphereLight(0xcfe8ff, 0x3d5a34, 0.95));
   const sun = new THREE.DirectionalLight(0xfff2cc, 1.5);
-  sun.position.set(60, 90, 30); sun.castShadow = true; panoScene.add(sun);
+  sun.position.set(60, 90, 30); sun.castShadow = false; panoScene.add(sun);
   panoScene.userData.seed = 20261027; // set panorama world seed, same for everyone
   panoScene.userData.camH = null; // smoothed orbit height, set on first frame
   // Center defaults to the origin until the background build sets the
@@ -494,7 +499,78 @@ function fmtLastPlayed(ts) {
   if (days < 30) return `Played ${days}d ago`;
   return 'Played ' + d.toLocaleDateString();
 }
-function makeWorldCard({ title, icon, lines, artSeed, selected, onSelect, menuItems }) {
+// Real 3D thumbnails (redo slice 6): each world gets one offscreen
+// render of its own seed, cached as a JPEG dataURL on the world record
+// (an ADDITIVE field — worlds without it just show the doodle, never
+// break). Renders queue one at a time in the background, only after
+// the lobby panorama has settled, so creation stays instant.
+let thumbRenderer = null, thumbQueue = [], thumbBusy = false, thumbsAllowed = false;
+const thumbImgCache = new Map();
+function drawThumbArt(canvas, thumb, key, artSeed) {
+  const ctx = canvas.getContext('2d');
+  let img = thumbImgCache.get(key);
+  if (!img) {
+    img = new Image();
+    img.onload = () => drawThumbArt(canvas, thumb, key, artSeed);
+    img.src = thumb;
+    thumbImgCache.set(key, img);
+    drawCardArt(canvas, artSeed); // doodle placeholder until it loads
+    return;
+  }
+  if (!img.complete) return;
+  const W = canvas.width, H = canvas.height;
+  const s = Math.max(W / img.width, H / img.height);
+  const dw = img.width * s, dh = img.height * s;
+  ctx.drawImage(img, (W - dw) / 2, (H - dh) / 2, dw, dh);
+}
+function queueThumb(w) {
+  if (!w || w.thumb || thumbQueue.includes(w)) return;
+  thumbQueue.push(w);
+  pumpThumbs();
+}
+async function pumpThumbs() {
+  if (thumbBusy || !thumbsAllowed || !thumbQueue.length) return;
+  thumbBusy = true;
+  const w = thumbQueue.shift();
+  try { await renderThumb(w); } catch { /* doodle stays */ }
+  thumbBusy = false;
+  if (thumbQueue.length) setTimeout(pumpThumbs, 500);
+}
+async function renderThumb(w) {
+  if (!thumbRenderer) {
+    thumbRenderer = new THREE.WebGLRenderer({ antialias: false });
+    thumbRenderer.setPixelRatio(1);
+    thumbRenderer.setSize(320, 180);
+    thumbRenderer.toneMapping = THREE.ACESFilmicToneMapping;
+  }
+  const scene = new THREE.Scene();
+  scene.environment = envTex();
+  scene.add(makeSkyDome(500));
+  scene.fog = new THREE.Fog(0xcfe4f5, 130, 380);
+  scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x3d5a34, 0.95));
+  const sun = new THREE.DirectionalLight(0xfff2cc, 1.5);
+  sun.position.set(60, 90, 30); scene.add(sun);
+  const built = await buildWorld(scene, w.seed, null, { light: true });
+  const sp = built.spawn;
+  const cam = new THREE.PerspectiveCamera(55, 320 / 180, 0.1, 1500);
+  cam.position.set(sp.x + 26, sp.y + 20, sp.z + 26);
+  cam.lookAt(sp.x, sp.y + 2, sp.z);
+  thumbRenderer.render(scene, cam);
+  const url = thumbRenderer.domElement.toDataURL('image/jpeg', 0.75);
+  // Dispose the build (geometries/materials; shared texture maps stay,
+  // same rule as the portal preview disposal).
+  scene.traverse((o) => {
+    if (!o.isMesh) return;
+    if (o.isInstancedMesh) o.dispose();
+    if (o.geometry) o.geometry.dispose();
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const m of mats) if (m) m.dispose();
+  });
+  w.thumb = url;
+  save('somewhere_worlds', S.worlds);
+  if (!$('lobby-screen').classList.contains('hidden')) renderWorlds();
+}
+function makeWorldCard({ title, icon, lines, artSeed, thumb, thumbKey, selected, onSelect, menuItems }) {
   // A div, not a button: the card carries its own "…" menu button, and
   // buttons may not nest inside buttons.
   const card = document.createElement('div');
@@ -502,7 +578,8 @@ function makeWorldCard({ title, icon, lines, artSeed, selected, onSelect, menuIt
   card.tabIndex = 0;
   const art = document.createElement('canvas');
   art.className = 'card-art'; art.width = 240; art.height = 128;
-  drawCardArt(art, artSeed);
+  if (thumb) drawThumbArt(art, thumb, thumbKey, artSeed);
+  else drawCardArt(art, artSeed);
   card.appendChild(art);
   const info = document.createElement('div');
   info.className = 'card-info';
@@ -637,8 +714,9 @@ function renderWorlds() {
   const list = $('worlds-list');
   list.innerHTML = '';
   for (const w of S.worlds) {
+    if (!w.thumb) queueThumb(w); // old worlds gain a thumb in the background
     list.appendChild(makeWorldCard({
-      title: w.name, icon: uiIcon('globe'), artSeed: w.seed,
+      title: w.name, icon: uiIcon('globe'), artSeed: w.seed, thumb: w.thumb, thumbKey: w.id,
       selected: S.selectedWorld === w.id,
       lines: [
         `Private · Solo · Seed ${w.seed}`,
@@ -802,8 +880,10 @@ $('world-create').onclick = () => {
     S.servers.push({ id: uid(), name, seed, members: 1, invited, owner: S.session ? S.session.username : '', keepInv: false, friendly: true });
     save('somewhere_servers', S.servers); renderServers();
   } else {
-    S.worlds.push({ id: uid(), name, seed, keepInv: $('world-keepinv').checked, friendly: $('world-friendly').checked, created: Date.now(), userCreated: true });
+    const nw = { id: uid(), name, seed, keepInv: $('world-keepinv').checked, friendly: $('world-friendly').checked, created: Date.now(), userCreated: true };
+    S.worlds.push(nw);
     save('somewhere_worlds', S.worlds); renderWorlds();
+    queueThumb(nw); // thumbnail renders in the background; creation stays instant
   }
   $('world-dialog').classList.add('hidden');
 };
