@@ -3,7 +3,7 @@ import { buildCharacter } from './character.js';
 import { buildWorld, heightAt, biomeAt, makeSkyDome, hideTreeInstances, refreshTreeInstances } from './world.js';
 import { ITEMS, RECIPES, QUICK_RECIPES, cleanText, load, save } from './data.js';
 import { itemIcon } from './icons.js';
-import { woodTex, brickTintedTex, shingleTintedTex, steelTex, goldLightTex, panelTex, pumpPanelTex, sidingTex, shadowTex, frostTex, soilTex, swirlTex, flakeTex, treadTex, appleTex, carrotTex, wheatTex, leatherTex, weaveTex, phoneTex, woodLightTex, stoneLightTex, leafLightTex } from './textures.js';
+import { woodTex, brickTintedTex, shingleTintedTex, steelTex, goldLightTex, panelTex, pumpPanelTex, sidingTex, shadowTex, frostTex, soilTex, swirlTex, flakeTex, treadTex, appleTex, carrotTex, wheatTex, leatherTex, weaveTex, phoneTex, woodLightTex, stoneLightTex, leafLightTex, envTex, normalMapFor } from './textures.js';
 
 const $ = (id) => document.getElementById(id);
 const S = window.Somewhere;
@@ -234,6 +234,9 @@ async function initScene(onProgress) {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
   scene = new THREE.Scene();
+  // Redo slice 1: procedural environment map — metals finally have
+  // something to reflect, so gold/iron/steel stop reading as plastic.
+  scene.environment = envTex();
   scene.background = null; // gradient sky dome covers the background
   scene.fog = new THREE.Fog(0xcfe4f5, 120, 340);
   const hemi = new THREE.HemisphereLight(0xcfe8ff, 0x3d5a34, 0.9);
@@ -2028,7 +2031,14 @@ function buildPieceMesh(itemId, colorOverride) {
   const matTex = (base, steel, tex, rough = 0.9, metal = 0) => {
     // Pre-tinted maps carry the hue, so the color stays white — the
     // old lerp washed every textured piece toward paint brown.
-    return new THREE.MeshStandardMaterial({ map: tex, color: 0xffffff, roughness: rough, metalness: metal });
+    // Redo slice 1: matching Sobel normal map at a modest 0.6 scale
+    // (steel skipped — its look stays exactly as-is).
+    const m = new THREE.MeshStandardMaterial({ map: tex, color: 0xffffff, roughness: rough, metalness: metal });
+    if (!steel) {
+      const n = normalMapFor(tex);
+      if (n) { m.normalMap = n; m.normalScale.set(0.6, 0.6); }
+    }
+    return m;
   };
   const add = (mesh, x, y, z) => { mesh.position.set(x, y, z); mesh.castShadow = true; mesh.receiveShadow = true; g.add(mesh); return mesh; };
   if (itemId.startsWith('wall_')) {

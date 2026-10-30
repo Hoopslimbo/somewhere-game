@@ -23,6 +23,9 @@ function mk(key, size, draw) {
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 4;
+  // Kept so a matching normal map can be derived from the same canvas
+  // (redo slice 1) — the color pattern must not be re-rolled.
+  t.userData.sourceCanvas = c;
   _cache[key] = t;
   return t;
 }
@@ -80,6 +83,91 @@ function rows(x, s, rowH, off, bw, base, vary, mortar) {
       x.fillRect(cx * bw + o + 2, r * rowH + rowH - 6, bw - 4, 4);
     }
   }
+}
+
+// ---------- Environment map (redo slice 1) ----------
+// Tiny procedural equirectangular environment: sky gradient on top, a
+// warm horizon band, dark ground below, soft sun glow. Assigned as
+// scene.environment so metals (gold, iron, steel) have something to
+// reflect — before this there was no env map at all, so high metalness
+// read as dark plastic. One-time cost; shared by every scene.
+let _env = null;
+export function envTex() {
+  if (_env) return _env;
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 128;
+  const x = c.getContext('2d');
+  const sky = x.createLinearGradient(0, 0, 0, 128);
+  sky.addColorStop(0, '#7ab8e8');
+  sky.addColorStop(0.45, '#cfe4f5');
+  sky.addColorStop(0.5, '#f5d9a8'); // warm horizon band
+  sky.addColorStop(0.55, '#5a5a52');
+  sky.addColorStop(1, '#2a2a26');
+  x.fillStyle = sky; x.fillRect(0, 0, 256, 128);
+  // Soft sun glow, upper sky.
+  const g = x.createRadialGradient(128, 34, 0, 128, 34, 60);
+  g.addColorStop(0, 'rgba(255,246,214,0.95)');
+  g.addColorStop(1, 'rgba(255,246,214,0)');
+  x.fillStyle = g;
+  x.beginPath(); x.arc(128, 34, 60, 0, Math.PI * 2); x.fill();
+  const t = new THREE.CanvasTexture(c);
+  t.mapping = THREE.EquirectangularReflectionMapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  _env = t;
+  return t;
+}
+
+// ---------- Normal maps (redo slice 1) ----------
+// Sobel-filter normal maps derived from the existing color canvases,
+// so the relief matches the painted grain exactly. Sampling wraps, so
+// the normal map tiles seamlessly like its color map. Strength stays
+// modest (0.6) — stylized-smooth relief, not bumpy photoreal. One-time
+// CPU at load. Returns null (callers then skip the normal map) if the
+// canvas pixel APIs are unavailable — e.g. the headless stub — and
+// never throws.
+export function normalMapFromCanvas(src, strength = 0.6) {
+  try {
+    const s = src.width, h = src.height;
+    const sctx = src.getContext('2d');
+    if (typeof sctx.getImageData !== 'function') return null;
+    const data = sctx.getImageData(0, 0, s, h).data;
+    const lum = (px, py) => {
+      const i = (((py + h) % h) * s + ((px + s) % s)) * 4;
+      return (data[i] + data[i + 1] + data[i + 2]) / 3 / 255;
+    };
+    const out = document.createElement('canvas');
+    out.width = s; out.height = h;
+    const octx = out.getContext('2d');
+    const img = octx.createImageData(s, h);
+    for (let y = 0; y < h; y++) {
+      for (let px = 0; px < s; px++) {
+        const gx = (lum(px + 1, y - 1) + 2 * lum(px + 1, y) + lum(px + 1, y + 1))
+          - (lum(px - 1, y - 1) + 2 * lum(px - 1, y) + lum(px - 1, y + 1));
+        const gy = (lum(px - 1, y + 1) + 2 * lum(px, y + 1) + lum(px + 1, y + 1))
+          - (lum(px - 1, y - 1) + 2 * lum(px, y - 1) + lum(px + 1, y - 1));
+        let nx = -gx * strength, ny = -gy * strength, nz = 1;
+        const il = 1 / Math.hypot(nx, ny, nz);
+        nx *= il; ny *= il; nz *= il;
+        const o = (y * s + px) * 4;
+        img.data[o] = (nx * 0.5 + 0.5) * 255;
+        img.data[o + 1] = (ny * 0.5 + 0.5) * 255;
+        img.data[o + 2] = (nz * 0.5 + 0.5) * 255;
+        img.data[o + 3] = 255;
+      }
+    }
+    octx.putImageData(img, 0, 0);
+    const t = new THREE.CanvasTexture(out);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.anisotropy = 4;
+    return t;
+  } catch (e) { return null; }
+}
+export function normalMapFor(colorTex, strength = 0.6) {
+  if (!colorTex || !colorTex.userData || !colorTex.userData.sourceCanvas) return null;
+  if (colorTex.userData.normalTex) return colorTex.userData.normalTex;
+  const n = normalMapFromCanvas(colorTex.userData.sourceCanvas, strength);
+  if (n) colorTex.userData.normalTex = n;
+  return n;
 }
 
 // ---------- Pre-tinted (use with white) ----------

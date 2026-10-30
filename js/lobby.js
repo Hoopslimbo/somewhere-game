@@ -3,6 +3,7 @@ import { buildCharacter, SKIN_TONES, HAIR_COLORS, HAIR_STYLES, SHIRT_COLORS, PAN
 import { buildWorld, makeSkyDome, heightAt } from './world.js';
 import { load, save, uid, hasBadWord, initialAvatar } from './data.js';
 import { uiIcon } from './icons.js';
+import { envTex } from './textures.js';
 
 const $ = (id) => document.getElementById(id);
 const S = window.Somewhere = window.Somewhere || {};
@@ -207,6 +208,7 @@ function initLobby3DSetup() {
   panoRenderer.toneMapping = THREE.ACESFilmicToneMapping;
   panoRenderer.toneMappingExposure = 1.05;
   panoScene = new THREE.Scene();
+  panoScene.environment = envTex(); // redo slice 1: metals reflect
   panoScene.background = null;
   panoScene.add(makeSkyDome(500));
   panoScene.fog = new THREE.Fog(0xcfe4f5, 130, 380);
@@ -224,6 +226,7 @@ function initLobby3DSetup() {
   charRenderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   charRenderer.setSize(312, 390);
   charScene = new THREE.Scene();
+  charScene.environment = envTex(); // redo slice 1: metals reflect
   charScene.add(new THREE.HemisphereLight(0xffffff, 0x3a4a5a, 0.9));
   const dl = new THREE.DirectionalLight(0xffffff, 1.6); dl.position.set(2, 4, 3); charScene.add(dl);
   const rim = new THREE.DirectionalLight(0x9fc4ff, 0.8); rim.position.set(-3, 2, -3); charScene.add(rim);
@@ -239,6 +242,7 @@ function initLobby3DSetup() {
   custRenderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   custRenderer.setSize(280, 350);
   custScene = new THREE.Scene();
+  custScene.environment = envTex(); // redo slice 1: metals reflect
   custScene.add(new THREE.HemisphereLight(0xffffff, 0x3a4a5a, 0.9));
   const cdl = new THREE.DirectionalLight(0xffffff, 1.6); cdl.position.set(2, 4, 3); custScene.add(cdl);
   const crim = new THREE.DirectionalLight(0x9fc4ff, 0.8); crim.position.set(-3, 2, -3); custScene.add(crim);

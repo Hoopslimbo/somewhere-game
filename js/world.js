@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { buildCharacter } from './character.js';
-import { woodTex, barkLightTex, leafLightTex, stoneLightTex, steelDarkTex, rustLightTex, goldLightTex, woodLightTex, leafNoiseTex, pebbleLightTex, dirtLightTex, flowerTex } from './textures.js';
+import { woodTex, barkLightTex, leafLightTex, stoneLightTex, steelDarkTex, rustLightTex, goldLightTex, woodLightTex, leafNoiseTex, pebbleLightTex, dirtLightTex, flowerTex, normalMapFor, normalMapFromCanvas } from './textures.js';
 
 // ---- Deterministic noise ----
 function hash2(x, y, seed) {
@@ -181,7 +181,7 @@ const MATS = {
   stone: [0x7d7f83, 0x8d8f94, 0x6e7073, 0x8a7f70].map((c) => std(c, 1)),
   iron: std(0x5a5a60, 0.55, 0.6),
   rust: std(0xb85c2a, 0.9),
-  gold: std(0xf5c542, 0.35, 0.35, { emissive: 0x442200 }), // low metalness: no env map, so high metalness read as dark brown
+  gold: std(0xf5c542, 0.35, 0.7, { emissive: 0x442200 }), // metalness raised (redo slice 1): a procedural env map now exists, so gold reads as gold instead of dark brown
   wood: [0x8a5a2b, 0x7a4e24, 0x96682f].map((c) => std(c, 1)),
   // Loot-chest body reuses the placed chest's pre-tinted grain body.
   chest: std(0xffffff, 0.9, 0, { map: woodTex() }),
@@ -206,7 +206,35 @@ MATS.iron.map = steelDarkTex();
 MATS.rust.map = rustLightTex();
 MATS.gold.map = goldLightTex();
 MATS.wood.forEach((m) => { m.map = woodLightTex(); });
+// Redo slice 1: Sobel normal maps on the main shared materials —
+// bark, stone, wood, and the chest's plank grain — at a modest 0.6
+// scale, so the relief stays stylized-smooth. Leaf skipped deliberately:
+// the biggest instanced meshes gain the least from it. Guarded: if the
+// canvas pixel APIs are unavailable (headless stub), normalMapFor
+// returns null and the material simply has no normal map.
+function addNormal(mat, tex) {
+  const n = normalMapFor(tex);
+  if (n) { mat.normalMap = n; mat.normalScale.set(0.6, 0.6); }
+}
+MATS.trunk.forEach((m) => addNormal(m, barkLightTex()));
+addNormal(MATS.birch, barkLightTex());
+addNormal(MATS.snag, barkLightTex());
+MATS.stone.forEach((m) => addNormal(m, stoneLightTex()));
+MATS.wood.forEach((m) => addNormal(m, woodLightTex()));
+addNormal(MATS.chest, woodTex());
 
+// First ground canvas wins for the cached normal map below: the color
+// canvas is re-rolled per build, but the map is near-white noise, so a
+// single cached normal is visually identical and saves a 1024px Sobel
+// on every world entry.
+let _groundCanvas = null, _groundNormal = null;
+function groundNormalTex() {
+  if (_groundNormal) return _groundNormal;
+  if (!_groundCanvas) groundTexture();
+  const n = normalMapFromCanvas(_groundCanvas, 0.6);
+  if (n) { n.repeat.set(128, 128); _groundNormal = n; }
+  return _groundNormal;
+}
 function groundTexture() {
   // Texture redo (2026-10-29) made colors LESS vibrant on Liam's screen:
   // 9000 dense gray speckles at double the old tiling (repeat 192) laid
@@ -221,18 +249,22 @@ function groundTexture() {
   // as a blocky grid of tiles. Every mark is now drawn at all 9 wrapped
   // offsets, so the left edge matches the right and the top matches
   // the bottom exactly — no seam grid at any repeat.
+  // Redo slice 1: canvas 512px → 1024px with layered close-up detail
+  // (grass-blade speckle, dirt clods, small stones). All marks are
+  // scaled ×2 from the 512 layout so their world size is unchanged —
+  // only sharper — and all alphas stay light so the vibrancy fix holds.
   const cv = document.createElement('canvas');
-  cv.width = cv.height = 512;
+  cv.width = cv.height = 1024;
   const ctx = cv.getContext('2d');
-  ctx.fillStyle = '#f2f2f2'; ctx.fillRect(0, 0, 512, 512);
+  ctx.fillStyle = '#f2f2f2'; ctx.fillRect(0, 0, 1024, 1024);
   // Draw at (x, y) plus all wrapped copies, so marks crossing an edge
   // continue on the opposite edge and the tile wraps seamlessly.
   const wrap = (x, y, fn) => {
-    for (const dx of [-512, 0, 512]) for (const dy of [-512, 0, 512]) fn(x + dx, y + dy);
+    for (const dx of [-1024, 0, 1024]) for (const dy of [-1024, 0, 1024]) fn(x + dx, y + dy);
   };
   // Large soft blotches: irregular, low-contrast, no straight edges.
   for (let i = 0; i < 130; i++) {
-    const x = Math.random() * 512, y = Math.random() * 512, r = 55 + Math.random() * 85;
+    const x = Math.random() * 1024, y = Math.random() * 1024, r = 110 + Math.random() * 170;
     const light = Math.random() < 0.5;
     wrap(x, y, (wx, wy) => {
       const grad = ctx.createRadialGradient(wx, wy, 0, wx, wy, r);
@@ -244,7 +276,7 @@ function groundTexture() {
   }
   // Mid mottling: overlapping soft blobs, patchy ground variation.
   for (let i = 0; i < 300; i++) {
-    const x = Math.random() * 512, y = Math.random() * 512, r = 12 + Math.random() * 48;
+    const x = Math.random() * 1024, y = Math.random() * 1024, r = 24 + Math.random() * 96;
     const light = Math.random() < 0.5;
     wrap(x, y, (wx, wy) => {
       const grad = ctx.createRadialGradient(wx, wy, 0, wx, wy, r);
@@ -258,7 +290,7 @@ function groundTexture() {
   for (let i = 0; i < 4000; i++) {
     const g = 200 + Math.floor(Math.random() * 50);
     ctx.fillStyle = `rgba(${g},${g},${g},0.15)`;
-    const sx = Math.random() * 512, sy = Math.random() * 512, sr = 0.8 + Math.random() * 1.4;
+    const sx = Math.random() * 1024, sy = Math.random() * 1024, sr = 1.6 + Math.random() * 2.8;
     wrap(sx, sy, (wx, wy) => {
       ctx.beginPath(); ctx.arc(wx, wy, sr, 0, Math.PI * 2); ctx.fill();
     });
@@ -267,9 +299,32 @@ function groundTexture() {
   for (let i = 0; i < 500; i++) {
     const g = 170 + Math.floor(Math.random() * 60);
     ctx.fillStyle = `rgba(${g},${g},${g},0.18)`;
-    const px = Math.random() * 512, py = Math.random() * 512;
-    wrap(px, py, (wx, wy) => { ctx.fillRect(wx, wy, 1.4, 1.4); });
+    const px = Math.random() * 1024, py = Math.random() * 1024;
+    wrap(px, py, (wx, wy) => { ctx.fillRect(wx, wy, 2.8, 2.8); });
   }
+  // Grass-blade speckle: short thin strokes, faint green-gray.
+  for (let i = 0; i < 3000; i++) {
+    ctx.fillStyle = `rgba(${130 + Math.floor(Math.random() * 40)},${140 + Math.floor(Math.random() * 30)},${110 + Math.floor(Math.random() * 30)},0.12)`;
+    const bx = Math.random() * 1024, by = Math.random() * 1024, bl = 4 + Math.random() * 8;
+    wrap(bx, by, (wx, wy) => { ctx.fillRect(wx, wy, 2, bl); });
+  }
+  // Dirt clods: small soft brown-gray blobs.
+  for (let i = 0; i < 400; i++) {
+    const g = 110 + Math.floor(Math.random() * 40);
+    ctx.fillStyle = `rgba(${g},${g - 20},${g - 45},0.14)`;
+    const cx = Math.random() * 1024, cy = Math.random() * 1024, cr = 3 + Math.random() * 6;
+    wrap(cx, cy, (wx, wy) => {
+      ctx.beginPath(); ctx.arc(wx, wy, cr, 0, Math.PI * 2); ctx.fill();
+    });
+  }
+  // Small stones: tiny light-gray squares.
+  for (let i = 0; i < 800; i++) {
+    const g = 175 + Math.floor(Math.random() * 50);
+    ctx.fillStyle = `rgba(${g},${g},${g},0.20)`;
+    const px = Math.random() * 1024, py = Math.random() * 1024, ps = 2 + Math.random() * 2;
+    wrap(px, py, (wx, wy) => { ctx.fillRect(wx, wy, ps, ps); });
+  }
+  if (!_groundCanvas) _groundCanvas = cv;
   const tex = new THREE.CanvasTexture(cv);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.repeat.set(128, 128); // tile ~14.5 world units on the 1862 island
@@ -448,7 +503,9 @@ function collectTreeParts(group, bucketMap, tree, mirror = false) {
     const bkey = key + '|tx:' + texTag;
     let bucket = bucketMap.get(bkey);
     if (!bucket) {
-      bucket = { geo, roughness: obj.material.roughness, metalness: obj.material.metalness, tex: texTag, items: [] };
+      // Instanced buckets rebuild materials from scratch, so the bark
+      // normal map must ride along here or instanced trunks lose it.
+      bucket = { geo, roughness: obj.material.roughness, metalness: obj.material.metalness, tex: texTag, normal: obj.material.normalMap || null, items: [] };
       bucketMap.set(bkey, bucket);
     }
     const scaleMatrix = new THREE.Matrix4().makeScale(scale.x, scale.y, scale.z);
@@ -470,7 +527,7 @@ function buildTreeInstancedMeshes(scene, bucketMap) {
     const texMap = bucket.tex === 'bark' ? barkLightTex() : bucket.tex === 'leaf' ? leafLightTex() : null;
     const inst = new THREE.InstancedMesh(
       bucket.geo,
-      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: bucket.roughness, metalness: bucket.metalness, ...(texMap ? { map: texMap } : {}) }),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: bucket.roughness, metalness: bucket.metalness, ...(texMap ? { map: texMap } : {}), ...(bucket.normal ? { normalMap: bucket.normal, normalScale: new THREE.Vector2(0.6, 0.6) } : {}) }),
       bucket.items.length);
     bucket.items.forEach((item, idx) => {
       inst.setMatrixAt(idx, item.matrix);
@@ -697,6 +754,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   }
   const terrain = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: 0.96, map: groundTexture(),
+    normalMap: groundNormalTex(), normalScale: new THREE.Vector2(0.6, 0.6),
   }));
   terrain.receiveShadow = true;
   scene.add(terrain);
