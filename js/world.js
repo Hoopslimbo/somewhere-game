@@ -215,43 +215,60 @@ function groundTexture() {
   // repeat (tile ~14.5 units) so the map adds texture without graying
   // the biome hues — vertex colors still drive the hue. Anisotropy 8
   // kept so the grain survives glancing angles. The 979-segment mesh
-  // is untouched. NOTE: the diamond grid Liam sees is NOT this map —
-  // it is the per-vertex jitter below (see the terrain-colors loop).
+  // is untouched. SEAMLESS (2026-10-29, second grid fix): the old map
+  // was NOT tileable — random blotches/speckle cut off at the tile
+  // edges, so every tile boundary drew a seam line and the ground read
+  // as a blocky grid of tiles. Every mark is now drawn at all 9 wrapped
+  // offsets, so the left edge matches the right and the top matches
+  // the bottom exactly — no seam grid at any repeat.
   const cv = document.createElement('canvas');
   cv.width = cv.height = 512;
   const ctx = cv.getContext('2d');
   ctx.fillStyle = '#f2f2f2'; ctx.fillRect(0, 0, 512, 512);
+  // Draw at (x, y) plus all wrapped copies, so marks crossing an edge
+  // continue on the opposite edge and the tile wraps seamlessly.
+  const wrap = (x, y, fn) => {
+    for (const dx of [-512, 0, 512]) for (const dy of [-512, 0, 512]) fn(x + dx, y + dy);
+  };
   // Large soft blotches: irregular, low-contrast, no straight edges.
   for (let i = 0; i < 130; i++) {
     const x = Math.random() * 512, y = Math.random() * 512, r = 55 + Math.random() * 85;
     const light = Math.random() < 0.5;
-    const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
-    grad.addColorStop(0, light ? 'rgba(255,255,255,0.05)' : 'rgba(70,70,70,0.05)');
-    grad.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = grad;
-    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    wrap(x, y, (wx, wy) => {
+      const grad = ctx.createRadialGradient(wx, wy, 0, wx, wy, r);
+      grad.addColorStop(0, light ? 'rgba(255,255,255,0.05)' : 'rgba(70,70,70,0.05)');
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(wx, wy, r, 0, Math.PI * 2); ctx.fill();
+    });
   }
   // Mid mottling: overlapping soft blobs, patchy ground variation.
   for (let i = 0; i < 300; i++) {
     const x = Math.random() * 512, y = Math.random() * 512, r = 12 + Math.random() * 48;
     const light = Math.random() < 0.5;
-    const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
-    grad.addColorStop(0, light ? 'rgba(255,255,255,0.08)' : 'rgba(60,60,60,0.08)');
-    grad.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = grad;
-    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    wrap(x, y, (wx, wy) => {
+      const grad = ctx.createRadialGradient(wx, wy, 0, wx, wy, r);
+      grad.addColorStop(0, light ? 'rgba(255,255,255,0.08)' : 'rgba(60,60,60,0.08)');
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(wx, wy, r, 0, Math.PI * 2); ctx.fill();
+    });
   }
   // Light sparse speckle: close-up detail without a gray veil.
   for (let i = 0; i < 4000; i++) {
     const g = 200 + Math.floor(Math.random() * 50);
     ctx.fillStyle = `rgba(${g},${g},${g},0.15)`;
-    ctx.beginPath(); ctx.arc(Math.random() * 512, Math.random() * 512, 0.8 + Math.random() * 1.4, 0, Math.PI * 2); ctx.fill();
+    const sx = Math.random() * 512, sy = Math.random() * 512, sr = 0.8 + Math.random() * 1.4;
+    wrap(sx, sy, (wx, wy) => {
+      ctx.beginPath(); ctx.arc(wx, wy, sr, 0, Math.PI * 2); ctx.fill();
+    });
   }
   // Sparse tiny pebble dots for close-up richness.
   for (let i = 0; i < 500; i++) {
     const g = 170 + Math.floor(Math.random() * 60);
     ctx.fillStyle = `rgba(${g},${g},${g},0.18)`;
-    ctx.fillRect(Math.random() * 512, Math.random() * 512, 1.4, 1.4);
+    const px = Math.random() * 512, py = Math.random() * 512;
+    wrap(px, py, (wx, wy) => { ctx.fillRect(wx, wy, 1.4, 1.4); });
   }
   const tex = new THREE.CanvasTexture(cv);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;

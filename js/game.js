@@ -677,7 +677,7 @@ function openPortal(targetDim, machine) {
   spawnPortal(machine.x, machine.z, targetDim, machine);
   toast('Portal open — walk into it.');
 }
-function spawnPortal(x, z, targetDim, machine) {
+function spawnPortal(x, z, targetDim, machine, facing) {
   closePortal();
   const group = new THREE.Group();
   const ringM = new THREE.MeshStandardMaterial({ color: 0x7a5cff, emissive: 0x7a5cff, emissiveIntensity: 1.6, roughness: 0.4 });
@@ -687,7 +687,11 @@ function spawnPortal(x, z, targetDim, machine) {
     new THREE.MeshStandardMaterial({ map: swirlTex(), transparent: true, opacity: 0.55, emissive: 0x7a5cff, emissiveIntensity: 0.8, side: THREE.DoubleSide }));
   disc.position.y = 1.6; group.add(disc);
   group.position.set(x, groundY(x, z), z);
-  group.rotation.y = Math.atan2(P.pos.x - x, P.pos.z - z);
+  // FIXED 2026-10-29: the portal used to turn to face whoever opened
+  // it, so it looked sideways. It now always faces straight out of
+  // the machine's frame (the machine's own facing); a recalled portal
+  // reuses the facing of the portal you came through.
+  group.rotation.y = (typeof facing === 'number') ? facing : (machine && typeof machine.rotY === 'number' ? machine.rotY : 0);
   scene.add(group);
   // armedAt + prevD: walking in must be a real crossing, not standing
   // still where the portal happened to open — and not merely walking
@@ -765,7 +769,7 @@ function doPhoneRecall() {
     // recall must not resurrect the game.
     setTimeout(() => { if (started) switchDimension('normal', { x: W.home?.x ?? P.pos.x, z: (W.home?.z ?? P.pos.z) + 2 }); }, 700);
   } else {
-    spawnPortal(a.x, a.z, 'normal', null);
+    spawnPortal(a.x, a.z, 'normal', null, W.lastPortalFacing);
     toast('Portal reopened at your arrival spot — walk in.');
   }
 }
@@ -866,6 +870,9 @@ function updateFlipped(dt) {
       const arrive = targetDim === 'flipped'
         ? { x: P.pos.x, z: P.pos.z }
         : { x: W.home?.x ?? P.pos.x, z: (W.home?.z ?? P.pos.z) + 2 };
+      // Remember this portal's facing so a phone recall reopens the
+      // return portal facing the same straight way (not at the player).
+      W.lastPortalFacing = portal.group.rotation.y;
       switchDimension(targetDim, arrive);
     }
     // Track the crossing every frame (even while arming), guarded in
@@ -1025,6 +1032,10 @@ function collideWorld() {
   }
   for (const p of placed) {
     if (p.type === 'floor') continue;
+    // Portal command center: its platform is a step you must stand on
+    // to walk into the arch — the 2D box used to shove you off the
+    // machine center no matter how high you jumped (2026-10-29).
+    if (p.itemId === 'portal_command') continue;
     const dx = P.pos.x - p.x, dz = P.pos.z - p.z;
     const hw = p.type === 'wall' ? 1.6 : 1.1, hd = p.type === 'wall' ? 0.5 : 1.1;
     if (Math.abs(dx) < hw + r && Math.abs(dz) < hd + r) {
@@ -1373,7 +1384,17 @@ function findTarget() {
     if (pd > radius) return; // crosshair isn't on it
     bestT = t; best = { ...data, dist: t };
   };
-  for (const t of world.trees) consider(t.x, t.h + t.trunkH * 0.6, t.z, Math.max(1.0, 1.1 * (t.scale || 1)), { kind: 'tree', ref: t });
+  for (const t of world.trees) {
+    // Whole-tree targeting (2026-10-29: one sphere at 0.6*trunkH meant
+    // only the trunk middle registered — base and canopy were dead).
+    // Spheres spaced along the trunk (never more than ~1.6 apart, so
+    // no trunk point is farther than the radius from a center), plus
+    // one canopy sphere over the foliage.
+    const tr = Math.max(1.0, 1.1 * (t.scale || 1));
+    const n = Math.max(2, Math.ceil(t.trunkH / 1.6));
+    for (let i = 0; i < n; i++) consider(t.x, t.h + (i + 0.5) * t.trunkH / n, t.z, tr, { kind: 'tree', ref: t });
+    consider(t.x, t.h + t.trunkH + 1.2 * (t.scale || 1), t.z, Math.max(1.5, 1.7 * (t.scale || 1)), { kind: 'tree', ref: t });
+  }
   for (const r of world.rocks) consider(r.x, r.h + 0.6, r.z, (r.radius || 0.7) + 0.35, { kind: 'rock', ref: r });
   for (const s of world.groundStones) consider(s.x, s.h + 0.2, s.z, 0.55, { kind: 'groundstone', ref: s });
   // Loot chests stay targetable after opening, so you can reopen one
@@ -1383,7 +1404,19 @@ function findTarget() {
     const rad = it.type === 'goldbench' ? 1.7 : it.type === 'shop' ? 2.4 : 1.9;
     consider(it.x, groundY(it.x, it.z) + 1, it.z, rad, { kind: it.type, ref: it });
   }
-  for (const p of placed) consider(p.x, p.y + 1, p.z, 1.6, { kind: 'placed', ref: p });
+  for (const p of placed) {
+    consider(p.x, p.y + 1, p.z, 1.6, { kind: 'placed', ref: p });
+    // Portal command center: the control pad sits 2.6 units to the
+    // side, outside the 1.6 body sphere — aiming at it registered
+    // nothing (2026-10-29). The pad gets its own target so pressing
+    // the console opens the keypad, like the machine body does.
+    if (p.itemId === 'portal_command') {
+      const ry = p.rotY || 0, cx = Math.cos(ry), sx = Math.sin(ry);
+      // Local pad offset (2.60, 0.30) rotated by the piece facing:
+      // local +x -> (cos, -sin), local +z -> (sin, cos).
+      consider(p.x + 2.60 * cx + 0.30 * sx, p.y + 0.8, p.z - 2.60 * sx + 0.30 * cx, 0.9, { kind: 'placed', ref: p });
+    }
+  }
   for (const d of darkened) consider(d.group.position.x, d.group.position.y + 1.1, d.group.position.z, 1.2, { kind: 'darkened', ref: d });
   for (const car of cars) if (!car.broken) consider(car.group.position.x, car.group.position.y + 0.8, car.group.position.z, 2.1, { kind: 'car', ref: car });
   for (const pl of crops) consider(pl.x, groundY(pl.x, pl.z) + 0.3, pl.z, 0.65, { kind: 'crop', ref: pl });
@@ -2044,8 +2077,9 @@ function buildPieceMesh(itemId, colorOverride) {
     // front, since pieces face the player with local +z). The portal
     // ring/disc sits INSIDE the arch at the piece origin — openPortal
     // now spawns it at the machine center, not 2 units out.
-    // The arch clears the 2.8-wide ring: prong bases at |x| 1.85 lean
-    // inward to |x| ~1.55 at ring height, tips converging above it.
+    // The arch clears the 2.8-wide ring: prong bases at |x| 1.95 lean
+    // inward, the mid segment stays outside the disc (closest ~0.2
+    // clear), tips curl inward above the ring.
     const steelDarkM = new THREE.MeshStandardMaterial({ map: steelTex(), color: 0x3a3f4a, roughness: 0.5, metalness: 0.6 });
     const glowM = new THREE.MeshStandardMaterial({ color: 0x7a5cff, emissive: 0x7a5cff, emissiveIntensity: 1.4 });
     const panelM = new THREE.MeshStandardMaterial({ map: panelTex(), roughness: 0.5, metalness: 0.4 });
@@ -2055,18 +2089,34 @@ function buildPieceMesh(itemId, colorOverride) {
       const bolt = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), steelDarkM);
       add(bolt, bx, 0.20, bz);
     }
-    // Claw prongs, left (-x) and right (+x): knuckle, lower segment,
-    // middle segment leaning further in, glowing tip cone curling
-    // toward the top center. The arch between them stays open.
+    // Claw prongs, left (-x) and right (+x): one connected chain per
+    // side — knuckle, lower segment, mid segment, glowing tip — each
+    // piece starting exactly where the last ends, leaning INWARD
+    // (rotation.z = side * angle), with a joint sphere covering every
+    // bend. FIXED 2026-10-29: the old segments were hand-placed with
+    // flipped lean signs, so they splayed outward and floated apart.
     for (const side of [-1, 1]) {
+      // Inward direction at lean angle a: local +y rotated by side*a.
+      const dir = (a) => [-side * Math.sin(a), Math.cos(a)];
+      const d1 = dir(0.18), d2 = dir(0.42), d3 = dir(1.05);
+      const J0 = [side * 1.95, 0.38];
+      const J1 = [J0[0] + d1[0] * 1.35, J0[1] + d1[1] * 1.35];
+      const J2 = [J1[0] + d2[0] * 1.25, J1[1] + d2[1] * 1.25];
       const knuckle = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8), steelDarkM);
-      add(knuckle, side * 1.85, 0.38, 0);
+      add(knuckle, J0[0], J0[1], 0);
       const lower = new THREE.Mesh(new THREE.BoxGeometry(0.26, 1.35, 0.30), steelDarkM);
-      lower.rotation.z = side * -0.18; add(lower, side * 1.78, 0.95, 0);
+      lower.rotation.z = side * 0.18;
+      add(lower, J0[0] + d1[0] * 0.675, J0[1] + d1[1] * 0.675, 0);
+      const joint1 = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8), steelDarkM);
+      add(joint1, J1[0], J1[1], 0);
       const mid = new THREE.Mesh(new THREE.BoxGeometry(0.24, 1.25, 0.28), steelDarkM);
-      mid.rotation.z = side * -0.50; add(mid, side * 1.48, 2.05, 0);
+      mid.rotation.z = side * 0.42;
+      add(mid, J1[0] + d2[0] * 0.625, J1[1] + d2[1] * 0.625, 0);
+      const joint2 = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8), steelDarkM);
+      add(joint2, J2[0], J2[1], 0);
       const tip = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.85, 8), glowM);
-      tip.rotation.z = side * -1.05; add(tip, side * 0.72, 2.95, 0);
+      tip.rotation.z = side * 1.05;
+      add(tip, J2[0] + d3[0] * 0.425, J2[1] + d3[1] * 0.425, 0);
     }
     // Control-pad machine, right of the frame: cabinet + tilted
     // glowing screen + 4 keypad buttons. This is where the player
