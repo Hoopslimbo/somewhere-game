@@ -1030,6 +1030,13 @@ function collideWorld() {
     const d = Math.hypot(dx, dz);
     if (d < rk.radius + r && d > 0.001) { P.pos.x = rk.x + dx / d * (rk.radius + r); P.pos.z = rk.z + dz / d * (rk.radius + r); }
   }
+  // Bushes (2026-10-29: solid-looking domes with no collision — you
+  // phased straight through them, notably the lumpy areas near water).
+  for (const b of world.bushes || []) {
+    const dx = P.pos.x - b.x, dz = P.pos.z - b.z;
+    const d = Math.hypot(dx, dz);
+    if (d < b.r + r && d > 0.001) { P.pos.x = b.x + dx / d * (b.r + r); P.pos.z = b.z + dz / d * (b.r + r); }
+  }
   for (const p of placed) {
     if (p.type === 'floor') continue;
     // Portal command center: its platform is a step you must stand on

@@ -923,6 +923,7 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   const bushMat = new THREE.MeshStandardMaterial({ map: leafNoiseTex(), color: 0xffffff, roughness: 1 });
   const bushes = new THREE.InstancedMesh(bushGeo, bushMat, BUSH_CAP);
   const bushCol = new THREE.Color();
+  const bushCols = [];
   let bi = 0;
   reportProgress(onProgress, 'Bushes', 0.79);
   for (let i = 0; i < BUSH_N && bi < BUSH_CAP; i++) {
@@ -937,10 +938,15 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     if (b === 'desert' || b === 'snowy') continue;
     dummy.position.set(mx(x), h + 0.2, z);
     dummy.rotation.set(0, rand() * Math.PI * 2, 0);
-    dummy.scale.set(0.45 + rand() * 0.55, 0.35 + rand() * 0.3, 0.45 + rand() * 0.55);
+    const bsx = 0.45 + rand() * 0.55, bsy = 0.35 + rand() * 0.3, bsz = 0.45 + rand() * 0.55;
+    dummy.scale.set(bsx, bsy, bsz);
     dummy.updateMatrix();
     bushes.setMatrixAt(bi, dummy.matrix);
     bushes.setColorAt(bi, bushCol.setHSL(0.29 + rand() * 0.06, 0.45, 0.24 + rand() * 0.10));
+    // Collision record (2026-10-29: bushes looked like solid lumps but
+    // had no collision, so you could phase straight through them).
+    // Same rand() calls, same order — generation is untouched.
+    bushCols.push({ x: mx(x), z, r: 0.7 * Math.max(bsx, bsz) });
     bi++;
   }
   bushes.count = bi; bushes.castShadow = true;
@@ -1152,5 +1158,5 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   // A lantern by the gold bench stays: it marks spawn, not a shop.
 
   reportProgress(onProgress, 'Done', 1);
-  return { spawn, trees, rocks, groundStones, chests, interactables, size: SIZE };
+  return { spawn, trees, rocks, groundStones, chests, interactables, bushes: bushCols, size: SIZE };
 }

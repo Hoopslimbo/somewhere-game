@@ -442,11 +442,15 @@ body.friends-open .friends-panel { transform: translateX(0); }
    fixed full-screen sheet translated below the viewport when closed;
    opening slides it UP to cover the whole lobby. In menu mode it
    returns to its normal in-flow layout below the header. */
-#lobby-screen:not(.menu-open) .lobby-bottom { position: fixed; left: 0; right: 0; top: 0; bottom: 0; z-index: 25; margin: 0; border: none; border-radius: 0; padding: 16px 28px 0; transform: translateY(calc(100% - 56px)); transition: transform .38s ease, background .38s ease; overflow: hidden; background: transparent; backdrop-filter: none; box-shadow: none; }
+#lobby-screen:not(.menu-open) .lobby-bottom { position: fixed; left: 0; right: 0; top: 0; bottom: 0; z-index: 25; margin: 0; border: none; border-radius: 0; padding: 16px 28px 0; transform: translateY(calc(100% - 72px)); transition: transform .38s ease, background .38s ease; overflow: hidden; background: transparent; backdrop-filter: none; box-shadow: none; }
 /* NO bar/band by the trapezoid, in either state: the sheet itself is
    fully transparent (no background, no blur, no shadow) and the dark
    panel background lives only on the content panel below the handle.
-   Closed, only the trapezoid shows; open, the dark handle sits
+   Closed, the trapezoid shows FULLY with room to spare (72px peek:
+   16 padding + 40 handle + 16 spare) — the old 56px peek sat exactly
+   flush with the screen bottom, zero margin, so any rounding or
+   window offset cut the word (Liam 2026-10-29). A thin 8px strip of
+   the panel peeks below the handle; open, the dark handle sits
    8px above the dark content panel — small gap, handle never
    touches the panel (Liam 2026-10-29: no large gap), and the
    handle matches the panel color with white text. */
