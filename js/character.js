@@ -248,30 +248,4 @@ export function animateCharacter(g, t, walk) {
   g.scale.setScalar(u.baseScale * (1 + Math.sin(t * 1.8) * 0.008));
 }
 
-// Worn-armor overlay (redo slice 5): blocky plates over the character —
-// helmet, chestplate, shoulder pads, leg plates. Colors match the armor
-// icons (stone gray, iron silver). Every plate sits proud of the body
-// so nothing z-fights. Lobby/customize only — first person never sees
-// the body, and Darkened never wear it.
-export function buildArmorOverlay(armorId) {
-  const plate = armorId === 'armor_iron' ? 0xc8ccd2 : 0x8a8d92;
-  const line = armorId === 'armor_iron' ? 0x7d8288 : 0x5c5f64;
-  const g = new THREE.Group();
-  const pm = mat(plate, 0.5), lm = mat(line, 0.6);
-  // Helmet: crown + sides + back, sized to cover most hair; the face
-  // stays open so the character keeps its identity.
-  box(0.50, 0.14, 0.48, pm, 0, 2.17, 0, g);
-  box(0.05, 0.34, 0.46, pm, -0.245, 2.06, 0, g);
-  box(0.05, 0.34, 0.46, pm, 0.245, 2.06, 0, g);
-  box(0.48, 0.34, 0.05, pm, 0, 2.06, -0.225, g);
-  // Chestplate: 0.02 proud of the torso on all sides, trim at the waist.
-  box(0.56, 0.60, 0.32, pm, 0, 1.28, 0, g);
-  box(0.56, 0.08, 0.34, lm, 0, 1.02, 0, g);
-  // Shoulder pads: static caps over the arm pivots (arms swing beneath).
-  box(0.20, 0.10, 0.22, pm, -0.325, 1.57, 0, g);
-  box(0.20, 0.10, 0.22, pm, 0.325, 1.57, 0, g);
-  // Leg plates over the upper legs.
-  box(0.22, 0.40, 0.24, pm, -0.14, 0.55, 0, g);
-  box(0.22, 0.40, 0.24, pm, 0.14, 0.55, 0, g);
-  return g;
-}
+

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { buildCharacter, animateCharacter, buildArmorOverlay, SKIN_TONES, HAIR_COLORS, HAIR_STYLES, SHIRT_COLORS, PANTS_COLORS, SHOE_COLORS, DEFAULT_CHAR } from './character.js';
+import { buildCharacter, animateCharacter, SKIN_TONES, HAIR_COLORS, HAIR_STYLES, SHIRT_COLORS, PANTS_COLORS, SHOE_COLORS, DEFAULT_CHAR } from './character.js';
 import { buildWorld, makeSkyDome, heightAt } from './world.js';
 import { load, save, uid, hasBadWord, initialAvatar } from './data.js';
 import { uiIcon } from './icons.js';
@@ -274,32 +274,6 @@ function refreshCharacter() {
     custGroup = buildCharacter(S.char);
     custGroup.position.y = 0;
     custScene.add(custGroup);
-  }
-  updateLobbyArmor();
-}
-// Worn armor on the previews (redo slice 5): the lobby character wears
-// the selected world's armor (if that world has a worn set). The save
-// key is the same one the game writes; a missing save just means no
-// overlay — never a break.
-function selectedWorldArmorId() {
-  const id = S.selectedWorld || S.selectedServer;
-  if (!id) return null;
-  try {
-    const s = load('somewhere_save_' + id, null);
-    return s?.armor?.id || null;
-  } catch { return null; }
-}
-function updateLobbyArmor() {
-  const armorId = selectedWorldArmorId();
-  for (const grp of [charGroup, custGroup]) {
-    if (!grp) continue;
-    const old = grp.getObjectByName('armorOverlay');
-    if (old) grp.remove(old);
-    if (armorId) {
-      const ov = buildArmorOverlay(armorId);
-      ov.name = 'armorOverlay';
-      grp.add(ov);
-    }
   }
 }
 function lobbyLoop() {
@@ -630,7 +604,6 @@ function clearSelectionIf(id) {
     S.selectedWorld = null; S.selectedServer = null;
     $('btn-play').classList.add('hidden');
     $('selected-world-label').textContent = '';
-    updateLobbyArmor();
   }
 }
 let confirmCb = null;
@@ -694,7 +667,6 @@ function selectWorld(w) {
   // for the already-selected world when the build settles.
   if (lobbyIslandReady) $('btn-play').classList.remove('hidden');
   $('selected-world-label').textContent = 'Selected: ' + w.name;
-  updateLobbyArmor();
   // Close the sheet so the hero character + Play button are visible —
   // the sheet otherwise keeps covering them after a tap.
   setWorldsOpen(false);
@@ -706,7 +678,6 @@ function selectServer(s) {
   // has settled; onLobbyBuiltSettled covers the already-selected case.
   if (lobbyIslandReady) $('btn-play').classList.remove('hidden');
   $('selected-world-label').textContent = 'Selected server: ' + s.name;
-  updateLobbyArmor();
   // Same as selectWorld: close the sheet to reveal hero + Play.
   setWorldsOpen(false);
 }
