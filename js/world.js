@@ -759,14 +759,99 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   terrain.receiveShadow = true;
   scene.add(terrain);
 
-  // Sea (visual only in v1 — water mechanics are v2). A single flat,
-  // slightly deeper-tinted plane: water reads as water, never as a
-  // colored grid — the grid look came from per-cell terrain jitter,
-  // fixed above with smooth shading noise.
-  const sea = new THREE.Mesh(
-    new THREE.PlaneGeometry(SIZE * 3, SIZE * 3),
-    new THREE.MeshStandardMaterial({ color: mirror ? 0xd0803b : 0x2f7fc4, transparent: true, opacity: 0.85, roughness: 0.15, metalness: 0.1 })
-  );
+  // Sea (redo slice 2 — visual only, water mechanics stay v2): one
+  // shader plane instead of a flat color — scrolling ripple normal,
+  // fresnel sky reflection, sun glint, and a shore foam band driven by
+  // a baked heightmap. The bake calls heightAt only (zero rand()),
+  // so generation — and every chest save matched by exact x/z — is
+  // untouched. Byte-encoded heights (0.25 steps) + linear filtering
+  // keep the foam band smooth without float-texture requirements.
+  const HM = light ? 256 : 512;
+  const hmData = new Uint8Array(HM * HM);
+  reportProgress(onProgress, 'Sea', 0.50);
+  for (let hy = 0; hy < HM; hy++) {
+    const z = (hy / (HM - 1) - 0.5) * SIZE;
+    for (let hx = 0; hx < HM; hx++) {
+      const x = (hx / (HM - 1) - 0.5) * SIZE;
+      hmData[hy * HM + hx] = Math.max(0, Math.min(255, Math.round((heightAt(x, z, seed) + 4) / 64 * 255)));
+    }
+    if (hy % 32 === 31) await yieldToBrowser();
+  }
+  const heightTex = new THREE.DataTexture(hmData, HM, HM, THREE.RedFormat, THREE.UnsignedByteType);
+  heightTex.magFilter = THREE.LinearFilter; heightTex.minFilter = THREE.LinearFilter;
+  heightTex.wrapS = heightTex.wrapT = THREE.ClampToEdgeWrapping; heightTex.needsUpdate = true;
+  const seaUniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
+    uTime: { value: 0 },
+    uHeightTex: { value: null },
+    uMirror: { value: mirror ? -1 : 1 },
+    uSize: { value: SIZE },
+    uDeep: { value: new THREE.Color(mirror ? 0x7a3a10 : 0x25628f) },
+    uShallow: { value: new THREE.Color(mirror ? 0xd0803b : 0x4fa8b8) },
+    uSky: { value: new THREE.Color(mirror ? 0x1a2438 : 0xcfe4f5) },
+    uFoam: { value: new THREE.Color(mirror ? 0xffd9b0 : 0xffffff) },
+    uSunDir: { value: new THREE.Vector3(40, 70, 20).normalize() },
+    uBright: { value: mirror ? 0.55 : 1.0 },
+  }]);
+  seaUniforms.uHeightTex.value = heightTex;
+  const seaMat = new THREE.ShaderMaterial({
+    transparent: true, fog: true, uniforms: seaUniforms,
+    vertexShader: `
+      #include <fog_pars_vertex>
+      varying vec3 vWorldPosition;
+      void main() {
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWorldPosition = wp.xyz;
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+        #include <fog_vertex>
+      }`,
+    fragmentShader: `
+      #include <fog_pars_fragment>
+      uniform float uTime, uMirror, uSize, uBright;
+      uniform vec3 uDeep, uShallow, uSky, uFoam, uSunDir;
+      uniform sampler2D uHeightTex;
+      varying vec3 vWorldPosition;
+      float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      float vnoise(vec2 p) {
+        vec2 i = floor(p), f = fract(p);
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),
+                   mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
+      }
+      void main() {
+        vec2 xz = vWorldPosition.xz;
+        float t = uTime;
+        // Ripple normal: two scrolling noise layers, finite-difference gradient.
+        float e = 0.6;
+        float n0 = vnoise(xz * 0.14 + vec2(t * 0.05, t * 0.03)) * 0.7 + vnoise(xz * 0.5 + vec2(-t * 0.08, t * 0.06)) * 0.3;
+        float nx = vnoise((xz + vec2(e, 0.0)) * 0.14 + vec2(t * 0.05, t * 0.03)) * 0.7 + vnoise((xz + vec2(e, 0.0)) * 0.5 + vec2(-t * 0.08, t * 0.06)) * 0.3;
+        float nz = vnoise((xz + vec2(0.0, e)) * 0.14 + vec2(t * 0.05, t * 0.03)) * 0.7 + vnoise((xz + vec2(0.0, e)) * 0.5 + vec2(-t * 0.08, t * 0.06)) * 0.3;
+        vec3 n = normalize(vec3((n0 - nx) * 1.4, 1.0, (n0 - nz) * 1.4));
+        // Shore height from the baked map (X mirrored in The Flipped).
+        vec2 huv = vec2((xz.x * uMirror + uSize * 0.5) / uSize, (xz.y + uSize * 0.5) / uSize);
+        float h = texture2D(uHeightTex, huv).r * 64.0 - 4.0;
+        vec3 viewDir = normalize(cameraPosition - vWorldPosition);
+        float fres = pow(1.0 - max(dot(viewDir, n), 0.0), 3.0);
+        float shallow = 1.0 - smoothstep(-6.0, 0.5, h);
+        vec3 col = mix(uDeep, uShallow, shallow * 0.85);
+        col = mix(col, uSky, fres * 0.65);
+        // Sun glint.
+        vec3 hv = normalize(viewDir + uSunDir);
+        col += pow(max(dot(n, hv), 0.0), 90.0) * 0.7;
+        // Shore foam: band where land meets sea + an animated waterline edge.
+        float band = smoothstep(-1.8, -0.7, h) * (1.0 - smoothstep(0.05, 0.45, h));
+        float fn = vnoise(xz * 0.45 + vec2(-t * 0.35, t * 0.12));
+        float foam = band * smoothstep(0.52, 0.72, fn);
+        float edge = (1.0 - smoothstep(0.0, 0.4, abs(h))) * smoothstep(0.45, 0.6, vnoise(xz * 0.9 + vec2(t * 0.2)));
+        foam = max(foam, edge * 0.8);
+        col = mix(col, uFoam, clamp(foam, 0.0, 1.0) * 0.9);
+        col *= uBright;
+        gl_FragColor = vec4(col, 0.9);
+        #include <fog_fragment>
+      }`,
+  });
+  seaMat.userData.heightTex = heightTex; // disposed with preview scenes (see disposePreviewScene)
+  const sea = new THREE.Mesh(new THREE.PlaneGeometry(SIZE * 3, SIZE * 3), seaMat);
   sea.rotation.x = -Math.PI / 2; sea.position.y = SEA; scene.add(sea);
 
   const rand = mulberry(seed * 7919 + 13);
@@ -1233,5 +1318,5 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   // A lantern by the gold bench stays: it marks spawn, not a shop.
 
   reportProgress(onProgress, 'Done', 1);
-  return { spawn, trees, rocks, groundStones, chests, interactables, bushes: bushCols, size: SIZE };
+  return { spawn, trees, rocks, groundStones, chests, interactables, bushes: bushCols, size: SIZE, seaMat };
 }

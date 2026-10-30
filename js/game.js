@@ -266,6 +266,34 @@ async function initScene(onProgress) {
   redSun.add(redHalo); redSun.add(redDisc);
   redSun.visible = false;
   scene.add(redSun); scene.userData.redSun = redSun;
+  // Visible sun disc + moon + stars (redo slice 2): the sky dome was
+  // gradient-only, so day had no sun and night had no moon or stars.
+  // Sun direction matches the directional light's fixed offset.
+  scene.userData.sunDir = new THREE.Vector3(40, 70, 20).normalize();
+  const sunDisc = new THREE.Group();
+  const sunHalo = new THREE.Mesh(new THREE.CircleGeometry(60, 32), new THREE.MeshBasicMaterial({ color: 0xffdf80, transparent: true, opacity: 0.35, fog: false, depthWrite: false }));
+  sunHalo.position.z = -1;
+  const sunDiscMesh = new THREE.Mesh(new THREE.CircleGeometry(30, 32), new THREE.MeshBasicMaterial({ color: 0xfff3b0, transparent: true, fog: false, depthWrite: false }));
+  sunDisc.add(sunHalo); sunDisc.add(sunDiscMesh);
+  scene.add(sunDisc); scene.userData.sunDisc = sunDisc;
+  const moon = new THREE.Group();
+  const moonHalo = new THREE.Mesh(new THREE.CircleGeometry(38, 32), new THREE.MeshBasicMaterial({ color: 0x9fb4cc, transparent: true, opacity: 0.2, fog: false, depthWrite: false }));
+  moonHalo.position.z = -1;
+  const moonMesh = new THREE.Mesh(new THREE.CircleGeometry(20, 32), new THREE.MeshBasicMaterial({ color: 0xe8ecf2, transparent: true, fog: false, depthWrite: false }));
+  moon.add(moonHalo); moon.add(moonMesh);
+  scene.add(moon); scene.userData.moon = moon;
+  const starGeo = new THREE.BufferGeometry();
+  const starPos = new Float32Array(700 * 3);
+  for (let i = 0; i < 700; i++) {
+    const a = Math.random() * Math.PI * 2, el = Math.asin(Math.random() * 0.95 + 0.05), r = 640;
+    starPos[i * 3] = Math.cos(a) * Math.cos(el) * r;
+    starPos[i * 3 + 1] = Math.sin(el) * r;
+    starPos[i * 3 + 2] = Math.sin(a) * Math.cos(el) * r;
+  }
+  starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+  const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 2, sizeAttenuation: false, transparent: true, opacity: 0, fog: false, depthWrite: false }));
+  stars.frustumCulled = false;
+  scene.add(stars); scene.userData.stars = stars;
   scene.userData.hemi = hemi;
 
   world = await buildWorld(scene, W.seed, onProgress, W.dim === 'flipped' ? { mirror: true } : {});
@@ -770,6 +798,30 @@ async function startPortalPreview(p) {
     redSun.add(halo); redSun.add(disc);
     pvScene.add(redSun);
   }
+  // Preview sky bodies (redo slice 2): a static sun disc for the normal
+  // window, stars for the Flipped window (its night sky).
+  let previewSun = null, previewStars = null;
+  if (!flipped) {
+    previewSun = new THREE.Group();
+    const pHalo = new THREE.Mesh(new THREE.CircleGeometry(60, 32), new THREE.MeshBasicMaterial({ color: 0xffdf80, transparent: true, opacity: 0.35, fog: false, depthWrite: false }));
+    pHalo.position.z = -1;
+    const pDisc = new THREE.Mesh(new THREE.CircleGeometry(30, 32), new THREE.MeshBasicMaterial({ color: 0xfff3b0, fog: false, depthWrite: false }));
+    previewSun.add(pHalo); previewSun.add(pDisc);
+    pvScene.add(previewSun);
+  } else {
+    const pGeo = new THREE.BufferGeometry();
+    const pPos = new Float32Array(400 * 3);
+    for (let i = 0; i < 400; i++) {
+      const a = Math.random() * Math.PI * 2, el = Math.asin(Math.random() * 0.95 + 0.05), r = 640;
+      pPos[i * 3] = Math.cos(a) * Math.cos(el) * r;
+      pPos[i * 3 + 1] = Math.sin(el) * r;
+      pPos[i * 3 + 2] = Math.sin(a) * Math.cos(el) * r;
+    }
+    pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+    previewStars = new THREE.Points(pGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 2, sizeAttenuation: false, transparent: true, opacity: 0.9, fog: false, depthWrite: false }));
+    previewStars.frustumCulled = false;
+    pvScene.add(previewStars);
+  }
   // Arrival spot, same rule as the walk-in: into the Flipped you land
   // where you stand; home you land at the machine + 2z. Ground height
   // is looked up in the TARGET dimension's coordinates (mirrored when
@@ -786,7 +838,7 @@ async function startPortalPreview(p) {
   // A newer portal (or travel, or quit) replaced this one mid-build:
   // drop the orphaned preview instead of attaching it to a dead portal.
   if (portal !== p) { disposePreviewScene(pvScene); return; }
-  p.previewScene = pvScene; p.previewSky = sky; p.previewRedSun = redSun;
+  p.previewScene = pvScene; p.previewSky = sky; p.previewRedSun = redSun; p.previewSun = previewSun; p.previewStars = previewStars;
   p.previewCam = cam; p.previewCamPos = { x: ax, y: gy + 2.0, z: az }; p.previewYawBase = yawBase;
   p.previewReady = true;
   // Swap the swirl for the live window (unlit: the preview is already
@@ -799,11 +851,15 @@ function disposePreviewScene(pvScene) {
   // bench, sky) — safe to dispose. Texture maps are NOT disposed: they
   // come from the shared textures.js cache the main world also uses.
   pvScene.traverse((o) => {
-    if (!o.isMesh) return;
+    if (!o.isMesh && !o.isPoints) return;
     if (o.isInstancedMesh) o.dispose();
     if (o.geometry) o.geometry.dispose();
     const mats = Array.isArray(o.material) ? o.material : [o.material];
-    for (const m of mats) if (m) m.dispose();
+    for (const m of mats) {
+      if (!m) continue;
+      if (m.userData?.heightTex) m.userData.heightTex.dispose(); // per-build sea heightmap, not the shared cache
+      m.dispose();
+    }
   });
 }
 let lastPreviewRender = 0;
@@ -823,6 +879,11 @@ function renderPortalPreview() {
     portal.previewRedSun.position.set(pos.x + 150, pos.y + 280, pos.z - 400);
     portal.previewRedSun.lookAt(pos.x, pos.y, pos.z);
   }
+  if (portal.previewSun) {
+    portal.previewSun.position.set(pos.x + 289, pos.y + 506, pos.z + 144);
+    portal.previewSun.lookAt(pos.x, pos.y, pos.z);
+  }
+  if (portal.previewStars) portal.previewStars.position.set(pos.x, pos.y, pos.z);
   renderer.setRenderTarget(previewRT);
   renderer.render(portal.previewScene, cam);
   renderer.setRenderTarget(null);
@@ -1067,6 +1128,22 @@ function loop() {
       redSun.lookAt(P.pos.x, P.pos.y, P.pos.z);
     }
   }
+  // Sun disc / moon / stars follow the player (redo slice 2); the sea
+  // shader's clock advances so ripples and foam animate.
+  const sunDir = scene.userData.sunDir;
+  const sunDisc = scene.userData.sunDisc;
+  if (sunDisc && sunDir) {
+    sunDisc.position.copy(P.pos).addScaledVector(sunDir, 600);
+    sunDisc.lookAt(P.pos.x, P.pos.y, P.pos.z);
+  }
+  const moon = scene.userData.moon;
+  if (moon) {
+    moon.position.set(P.pos.x - 300, P.pos.y + 330, P.pos.z - 390);
+    moon.lookAt(P.pos.x, P.pos.y, P.pos.z);
+  }
+  const stars = scene.userData.stars;
+  if (stars) stars.position.copy(P.pos);
+  if (world?.seaMat) world.seaMat.uniforms.uTime.value = clock.elapsedTime;
   renderer.render(scene, camera);
   renderPortalPreview();
   saveTimer += dt;
@@ -1093,6 +1170,32 @@ function updateDayNight() {
   scene.userData.sun.color.set(0xfff2cc).lerp(new THREE.Color(0xff9a4d), dusk * 0.7);
   if (W?.dim === 'flipped') scene.userData.sun.color.set(0xff6a1a); // fire-orange sun
   if (scene.userData.hemi) scene.userData.hemi.intensity = 0.35 + dayness * 0.6;
+  // Sky bodies (redo slice 2): normal sun disc by day, moon + stars by
+  // night; The Flipped keeps its red sun, but still gets stars.
+  const flipped = W?.dim === 'flipped';
+  const sd = scene.userData.sunDisc;
+  if (sd) {
+    sd.visible = !flipped && dayness > 0.02;
+    if (sd.visible) {
+      sd.children[0].material.opacity = 0.35 * dayness;
+      sd.children[1].material.opacity = dayness;
+      sd.children[1].material.color.set(0xfff3b0).lerp(new THREE.Color(0xff9a4d), dusk * 0.6);
+    }
+  }
+  const mn = scene.userData.moon;
+  if (mn) {
+    mn.visible = !flipped && dayness < 0.98;
+    if (mn.visible) {
+      mn.children[0].material.opacity = 0.2 * (1 - dayness);
+      mn.children[1].material.opacity = 1 - dayness;
+    }
+  }
+  const st = scene.userData.stars;
+  if (st) st.material.opacity = flipped ? 0.9 : (1 - dayness) * 0.9;
+  if (world?.seaMat) {
+    world.seaMat.uniforms.uBright.value = flipped ? 0.55 : 0.35 + dayness * 0.65;
+    if (sky) world.seaMat.uniforms.uSky.value.copy(sky.material.uniforms.horizonColor.value);
+  }
   // No day display in the HUD — the top right stays clean by design.
   // Hunger drain + regen
   P.hunger = Math.max(0, P.hunger - 0.05 * (1 / 60) * 60 * 0.016); // ~1 per 20s, frame-rate independent-ish
