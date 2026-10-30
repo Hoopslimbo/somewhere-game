@@ -13,7 +13,7 @@ S.char = { ...DEFAULT_CHAR, ...load('somewhere_char', {}) };
 S.worlds = load('somewhere_worlds', null);
 S.servers = load('somewhere_servers', null);
 S.friends = load('somewhere_friends', null);
-S.keybinds = { ...{ forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD', jump: 'Space', interact: 'KeyE', chat: 'KeyT', inventory: 'KeyI', build: 'KeyB', quickcraft: 'KeyQ', help: 'KeyH' }, ...load('somewhere_keybinds', {}) };
+S.keybinds = { ...{ forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD', jump: 'Space', interact: 'KeyE', chat: 'KeyT', inventory: 'KeyI', build: 'KeyB', quickcraft: 'KeyQ', help: 'KeyH', sprint: 'ShiftLeft', crouch: 'AltLeft', friends: 'KeyF', pause: 'KeyP' }, ...load('somewhere_keybinds', {}) };
 S.settings = { brightness: 100, audio: 80, voice: 'party', ...load('somewhere_settings', {}) };
 // NO seeded world: new accounts start with zero worlds and create their
 // own. Migration: drop any leftover seeded "First Island" (the old seed
@@ -48,7 +48,7 @@ if (!S.friends) { S.friends = []; save('somewhere_friends', S.friends); }
 S.selectedWorld = null;
 S.selectedServer = null;
 
-const KEY_LABELS = { forward: 'Move forward', back: 'Move back', left: 'Move left', right: 'Move right', jump: 'Jump', interact: 'Interact', chat: 'Chat', inventory: 'Inventory', build: 'Build mode', quickcraft: 'Quick craft', help: 'Help' };
+const KEY_LABELS = { forward: 'Move forward', back: 'Move back', left: 'Move left', right: 'Move right', jump: 'Jump', interact: 'Interact', chat: 'Chat', inventory: 'Inventory', build: 'Build mode', quickcraft: 'Quick craft', help: 'Help', sprint: 'Sprint', crouch: 'Crouch', friends: 'Friends', pause: 'Pause menu' };
 function keyName(code) {
   return code.replace('Key', '').replace('Digit', '').replace('Space', 'Space');
 }
@@ -989,7 +989,7 @@ S.setFriendsOpen = setFriendsOpen;
 $('btn-friends').onclick = () => setFriendsOpen(!friendsOpen);
 $('btn-close-friends').onclick = () => setFriendsOpen(false);
 document.addEventListener('keydown', (e) => {
-  if (e.code !== 'KeyF') return;
+  if (e.code !== S.keybinds.friends) return;
   if ($('lobby-screen').classList.contains('hidden')) return;
   const tag = (document.activeElement && document.activeElement.tagName) || '';
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;

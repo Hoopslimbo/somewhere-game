@@ -22,6 +22,11 @@ let time = 600; // seconds into day cycle (30 min = 1800s); start 08:00
 let placed = [], cars = [], crops = [], drops = [];
 let chatOpen = false, buildMode = false, buildSel = null, paintColor = '#8a5a2b';
 let selSlot = 0, driving = null, interacting = null;
+// Driving free-look (redo slice 9): mouse yaw offset around the car,
+// reset on enter/exit; dust puff timer for the slice-4 pool.
+let driveLook = 0, dustTimer = 0;
+// Key-code formatter (redo slice 9): 'KeyW' -> 'W', 'ShiftLeft' stays.
+const fmtKey = (c) => (c || '').replace('Key', '').replace('Digit', '').replace('Space', 'Space');
 let chatLog = [];
 let saveTimer = 0;
 let swingStart = 0; // timestamp of the last tool swing (item-use animation)
@@ -380,8 +385,10 @@ function bindInput() {
       forwardHeld = true;
       lastForwardDown = now;
     }
-    // Esc opens/closes pause; P does exactly the same (Liam's key).
-    if (e.code === 'Escape' || e.code === 'KeyP') {
+    // Esc opens/closes pause; the pause bind (default P) does exactly
+    // the same. Esc itself is never rebindable — the browser reserves
+    // it for exiting pointer lock.
+    if (e.code === 'Escape' || e.code === kb.pause) {
       if (pauseSettingsOpen) { backToPauseMenu(); return; }
       if (pauseOpen) { closePause(); return; }
       if (document.body.classList.contains('friends-open')) { S.setFriendsOpen?.(false); return; }
@@ -438,10 +445,10 @@ function bindInput() {
     if (e.code === 'Digit8') { selSlot = 7; updateHUD(); }
     if (e.code === 'Digit9') { selSlot = 8; updateHUD(); }
     if (e.code === 'Digit0') { selSlot = 9; updateHUD(); }
-    // F is friends, everywhere: in the lobby the lobby handler owns it,
-    // in game this branch toggles the same panel. Eating is NOT F —
-    // eating is hold right-click (see startEatHold).
-    if (e.code === 'KeyF') {
+    // Friends bind (default F), everywhere: in the lobby the lobby
+    // handler owns it, in game this branch toggles the same panel.
+    // Eating is NOT F — eating is hold right-click (see startEatHold).
+    if (e.code === kb.friends) {
       if ($('game-screen').classList.contains('hidden')) return;
       S.setFriendsOpen?.(!document.body.classList.contains('friends-open'));
       return;
@@ -453,6 +460,11 @@ function bindInput() {
   });
   document.addEventListener('mousemove', (e) => {
     if (!locked) return;
+    // Driving free-look (redo slice 9): the mouse steers a look offset
+    // around the car (clamped to a full turn, no windup) instead of the
+    // body yaw. P.yaw still tracks, so stepping out of the car faces
+    // the way you were looking — exactly as before.
+    if (driving) driveLook = Math.max(-Math.PI, Math.min(Math.PI, driveLook - e.movementX * 0.0024));
     P.yaw -= e.movementX * 0.0024;
     P.pitch = Math.max(-1.2, Math.min(0.9, P.pitch - e.movementY * 0.0024));
   });
@@ -593,10 +605,10 @@ S.requestGameLock = requestGameLock;
 
 function renderHelp() {
   $('help-panel').innerHTML = `<h3>How to play</h3>
-  <p><b>WASD</b> move · <b>Double-tap W</b> sprint (hold W) · <b>Shift</b> sprint · <b>Hold Alt</b> crouch · <b>Mouse</b> look · <b>Space</b> jump<br>
+  <p><b>WASD</b> move · <b>Double-tap W</b> sprint (hold W) · <b>${fmtKey(S.keybinds.sprint)}</b> sprint · <b>Hold ${fmtKey(S.keybinds.crouch)}</b> crouch · <b>Mouse</b> look · <b>Space</b> jump<br>
   <b>Right-click</b> (or <b>E</b>) interact · <b>Hold right-click</b> eat · <b>Hold left-click</b> to chop / mine / dig · <b>Left- or right-click</b> place in build mode · <b>B</b> or switch to a non-building item exits build mode<br>
   <b>1–7</b> hotbar · <b>8, 9, 0</b> permanent slots (car key, house key, phone) · <b>Scroll</b> switch slot<br>
-  <b>I</b> backpack · <b>B</b> build mode · <b>Q</b> quick craft · <b>T</b> chat · <b>F</b> friends · <b>Esc</b> or <b>P</b> menu · <b>H</b> this help</p>
+  <b>${fmtKey(S.keybinds.inventory)}</b> backpack · <b>${fmtKey(S.keybinds.build)}</b> build mode · <b>${fmtKey(S.keybinds.quickcraft)}</b> quick craft · <b>${fmtKey(S.keybinds.chat)}</b> chat · <b>${fmtKey(S.keybinds.friends)}</b> friends · <b>Esc</b> or <b>${fmtKey(S.keybinds.pause)}</b> menu · <b>${fmtKey(S.keybinds.help)}</b> this help</p>
   <p>Start: chop trees with your wooden axe. Use the gold bench near spawn to craft walls, tools and machines. Place a vehicle machine, craft a car, and your car key appears in a permanent slot. Watch hunger — eat apples to stay full and regen health.</p>
   <p><b>Phone</b> (craft it with iron at a workbench): select it and <b>right-click</b> to open it. <b>Portal command center</b> (workbench: 4 iron + 4 wood): place it, use its keypad, and walk into the portal to reach The Flipped — a mirrored world of fire and darkness. There, the Darkened hunt you; beat one to earn the Shadow Sword, which poisons enemies. In The Flipped, your phone's <b>Portal Recall</b> calls a portal back to your arrival spot — or drags you home if you're far away.</p>
   <p><b>Armor</b> (workbench: Stone Armor from 6 stone, Iron Armor from 6 iron): drag a set onto the <b>Armor</b> slot in your inventory to wear it. Stone cuts damage by 25%, Iron by 50% — and a set wears out with every hit you take, so keep a spare.</p>`;
@@ -1256,10 +1268,15 @@ function groundY(x, z, yHint) {
 // ---------- Player ----------
 function updatePlayer(dt) {
   const kb = S.keybinds;
-  // Crouch: hold Alt — lower eye, slower walk, beats sprint. Sprint:
-  // Shift, or a double-tap of forward held down (see bindInput).
-  const crouching = keys['AltLeft'] || keys['AltRight'];
-  const sprinting = !crouching && (keys['ShiftLeft'] || keys['ShiftRight'] || (doubleTapSprint && keys[kb.forward]));
+  // Crouch: hold the crouch bind (default Alt) — lower eye, slower
+  // walk, beats sprint. Sprint: the sprint bind (default Shift), or a
+  // double-tap of forward held down (see bindInput). The bind is one
+  // key, but both Shifts / both Alts still work when the bound key is
+  // a Shift / Alt, so default behaviour is unchanged.
+  const crouchHeld = keys[kb.crouch] || (kb.crouch === 'AltLeft' ? keys['AltRight'] : kb.crouch === 'AltRight' ? keys['AltLeft'] : false);
+  const sprintHeld = keys[kb.sprint] || (kb.sprint === 'ShiftLeft' ? keys['ShiftRight'] : kb.sprint === 'ShiftRight' ? keys['ShiftLeft'] : false);
+  const crouching = crouchHeld;
+  const sprinting = !crouching && (sprintHeld || (doubleTapSprint && keys[kb.forward]));
   const speed = crouching ? 4 : sprinting ? 10.0 : 6;
   // Smooth eye height + sprint FOV zoom-out (base 62, sprint 70) so both
   // transitions glide instead of snapping.
@@ -1742,7 +1759,7 @@ function initDebris() {
   for (let i = 0; i < DEBRIS_CAP; i++) {
     debrisPool.push({ active: false, settled: false, fadeAt: 0, born: 0,
       px: 0, py: 0, pz: 0, vx: 0, vy: 0, vz: 0, rx: 0, ry: 0, rz: 0,
-      wx: 0, wy: 0, wz: 0, s: 0.15 });
+      wx: 0, wy: 0, wz: 0, s: 0.15, fadeDelay: 4000 });
     debrisDummy.position.set(0, -100, 0); debrisDummy.scale.setScalar(0.0001); debrisDummy.updateMatrix();
     debrisMesh.setMatrixAt(i, debrisDummy.matrix);
     debrisMesh.setColorAt(i, debrisTmpColor.set(0xffffff));
@@ -1751,7 +1768,7 @@ function initDebris() {
   if (debrisMesh.instanceColor) debrisMesh.instanceColor.needsUpdate = true;
   scene.add(debrisMesh);
 }
-function spawnDebris(x, y, z, colorHex, count) {
+function spawnDebris(x, y, z, colorHex, count, soft = false) {
   if (!debrisMesh) return;
   let spawned = 0;
   // First pass: inactive or already-settled slots. Second pass: steal
@@ -1760,24 +1777,27 @@ function spawnDebris(x, y, z, colorHex, count) {
   for (let i = 0; i < DEBRIS_CAP && spawned < count; i++) {
     const c = debrisPool[i];
     if (c.active && !c.settled) { falling.push(i); continue; }
-    spawnDebrisAt(i, x, y, z, colorHex); spawned++;
+    spawnDebrisAt(i, x, y, z, colorHex, soft); spawned++;
   }
   falling.sort((a, b) => debrisPool[a].born - debrisPool[b].born);
   for (const i of falling) {
     if (spawned >= count) break;
-    spawnDebrisAt(i, x, y, z, colorHex); spawned++;
+    spawnDebrisAt(i, x, y, z, colorHex, soft); spawned++;
   }
   if (debrisMesh.instanceColor) debrisMesh.instanceColor.needsUpdate = true;
 }
-function spawnDebrisAt(i, x, y, z, colorHex) {
+function spawnDebrisAt(i, x, y, z, colorHex, soft = false) {
   const c = debrisPool[i];
   c.active = true; c.settled = false; c.born = performance.now();
   c.px = x + (Math.random() - 0.5) * 0.6; c.py = y + Math.random() * 0.4; c.pz = z + (Math.random() - 0.5) * 0.6;
-  const a = Math.random() * Math.PI * 2, sp = 1.5 + Math.random() * 3;
-  c.vx = Math.cos(a) * sp; c.vz = Math.sin(a) * sp; c.vy = 2 + Math.random() * 3.5;
+  // Soft puffs (redo slice 9, driving dust): gentle drift and a short
+  // 0.7s rest before fading, instead of chunk arcs + a 4s rest.
+  const a = Math.random() * Math.PI * 2, sp = soft ? 0.3 + Math.random() * 0.7 : 1.5 + Math.random() * 3;
+  c.vx = Math.cos(a) * sp; c.vz = Math.sin(a) * sp; c.vy = soft ? 0.5 + Math.random() * 1 : 2 + Math.random() * 3.5;
   c.rx = Math.random() * 3; c.ry = Math.random() * 3; c.rz = Math.random() * 3;
   c.wx = (Math.random() - 0.5) * 8; c.wy = (Math.random() - 0.5) * 8; c.wz = (Math.random() - 0.5) * 8;
   c.s = 0.08 + Math.random() * 0.14;
+  c.fadeDelay = soft ? 700 : 4000;
   debrisTmpColor.set(colorHex).offsetHSL(0, 0, (Math.random() - 0.5) * 0.1);
   debrisMesh.setColorAt(i, debrisTmpColor);
 }
@@ -1794,7 +1814,7 @@ function updateDebris(dt) {
       c.px += c.vx * dt; c.py += c.vy * dt; c.pz += c.vz * dt;
       c.rx += c.wx * dt; c.ry += c.wy * dt; c.rz += c.wz * dt;
       const g = groundY(c.px, c.pz) + c.s * 0.5;
-      if (c.py <= g) { c.py = g; c.settled = true; c.fadeAt = now + 4000; }
+      if (c.py <= g) { c.py = g; c.settled = true; c.fadeAt = now + c.fadeDelay; }
     } else if (now >= c.fadeAt) {
       // Fade by shrinking over 1s, then deactivate.
       const f = Math.max(0, 1 - (now - c.fadeAt) / 1000);
@@ -2958,24 +2978,28 @@ function spawnCar(x, z) {
 function enterCar(car) {
   if (car.locked) { toast('That car is locked.'); return; }
   if (car.fuel <= 0) { toast('Out of fuel — use a gas pump or jerrycan.'); return; }
-  driving = car;
+  driving = car; driveLook = 0;
   startEngine();
   $('fuel-wrap').classList.remove('hidden');
-  toast('Driving! WASD to drive, E to get out, Shift for boost.');
+  toast(`Driving! WASD to drive, E to get out, ${fmtKey(S.keybinds.sprint)} for boost.`);
 }
 function exitCar() {
   if (!driving) return;
   stopEngine();
-  const car = driving; driving = null;
+  const car = driving; driving = null; driveLook = 0;
   // Player body stays hidden — first person on foot too
   P.pos.set(car.group.position.x + 2, groundY(car.group.position.x + 2, car.group.position.z + 1), car.group.position.z + 1);
   $('fuel-wrap').classList.add('hidden');
 }
 function updateDriving(dt) {
   const car = driving;
+  const kb = S.keybinds;
+  // Driving steers stay WASD (out of slice scope); boost follows the
+  // sprint bind (default Shift), both Shifts included as on foot.
   const fwd = (keys['KeyW'] ? 1 : 0) - (keys['KeyS'] ? 1 : 0);
   const steer = (keys['KeyA'] ? 1 : 0) - (keys['KeyD'] ? 1 : 0);
-  const boost = keys['ShiftLeft'] ? 1.5 : 1;
+  const sprintHeld = keys[kb.sprint] || (kb.sprint === 'ShiftLeft' ? keys['ShiftRight'] : kb.sprint === 'ShiftRight' ? keys['ShiftLeft'] : false);
+  const boost = sprintHeld ? 1.5 : 1;
   if (car.fuel > 0) {
     car.speed += fwd * 14 * dt * boost;
     car.fuel = Math.max(0, car.fuel - Math.abs(car.speed) * dt * 0.12);
@@ -3000,10 +3024,27 @@ function updateDriving(dt) {
   // Engine hum follows speed (redo slice 3).
   setEngineLevel(Math.min(1, Math.abs(car.speed) / 15));
   for (const w of car.wheels) w.rotation.x += car.speed * dt * 2;
-  // Driver's view — first person even while driving
+  // Driver's view — first person even while driving. Pitch stays
+  // halved as before; yaw gains the free-look offset (redo slice 9).
   camera.position.set(car.group.position.x, car.group.position.y + 1.6, car.group.position.z);
   camera.rotation.order = 'YXZ';
-  camera.rotation.set(P.pitch * 0.5, car.yaw, 0);
+  camera.rotation.set(P.pitch * 0.5, car.yaw + driveLook, 0);
+  // Speed FOV kick (redo slice 9): same glide as the sprint zoom,
+  // up to +10 at speed ~20.
+  const fovTarget = 62 + Math.min(10, Math.abs(car.speed) * 0.5);
+  if (Math.abs(camera.fov - fovTarget) > 0.05) {
+    camera.fov += (fovTarget - camera.fov) * Math.min(1, dt * 8);
+    camera.updateProjectionMatrix();
+  }
+  // Dust puffs (redo slice 9): soft debris from the slice-4 pool,
+  // kicked up behind the car on land at speed, a few times a second.
+  dustTimer += dt;
+  if (Math.abs(car.speed) > 5 && car.group.position.y > 0.3 && dustTimer > 0.15) {
+    dustTimer = 0;
+    const bx = car.group.position.x + Math.sin(car.yaw) * 1.5;
+    const bz = car.group.position.z + Math.cos(car.yaw) * 1.5;
+    spawnDebris(bx, car.group.position.y + 0.2, bz, 0xc9b18a, 2, true);
+  }
   if (viewmodel) viewmodel.visible = false;
   player.position.copy(car.group.position);
   if (car.hp <= 0 && !car.broken) {
