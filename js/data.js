@@ -77,6 +77,11 @@ export const ITEMS = {
   sword_wood: { name: 'Wood sword', tool: 'sword', power: 1, chip: '#8a5a2b' },
   sword_stone: { name: 'Stone sword', tool: 'sword', power: 2, chip: '#9aa0a8' },
   sword_iron: { name: 'Iron sword', tool: 'sword', power: 3, chip: '#c8ccd2' },
+  // Armor (2026-10-30): full sets, not separate pieces — one item per
+  // set, worn in the armor slot. nostack so each set keeps its own
+  // durability (tools use tool for this; armor has no tool type).
+  armor_stone: { name: 'Stone Armor', armor: true, nostack: true, reduce: 0.25, maxDur: 100, chip: '#6e7278' },
+  armor_iron: { name: 'Iron Armor', armor: true, nostack: true, reduce: 0.5, maxDur: 200, chip: '#c8ccd2' },
   portal_command: { name: 'Portal command center', placeable: 'portal_command', chip: '#7a5cff' },
 };
 
@@ -108,6 +113,8 @@ export const RECIPES = [
   ['sword_wood', { wood: 2 }, 'Wood sword'],
   ['sword_stone', { stone: 2, wood: 1 }, 'Stone sword'],
   ['sword_iron', { iron: 2, wood: 1 }, 'Iron sword'],
+  ['armor_stone', { stone: 6 }, 'Stone Armor'],
+  ['armor_iron', { iron: 6 }, 'Iron Armor'],
 ];
 export const QUICK_RECIPES = [
   ['pickaxe_wood', { wood: 3 }, 'Wooden pickaxe (mines stone)'],

@@ -276,6 +276,10 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
 .inv-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; }
 .inv-grid .slot { width: 100%; height: auto; min-height: 88px; padding: 6px 2px 10px; }
 .inv-actions { display: flex; gap: 9px; margin-top: 13px; }
+.armor-row { display: flex; align-items: center; gap: 10px; margin-top: 13px; }
+.armor-row .armor-label { font-weight: 800; color: #fff; }
+.armor-row .slot { width: 64px; height: 64px; flex: none; }
+.inv-panel.craft-mode .armor-row { display: none; }
 .craft-list { display: flex; flex-direction: column; gap: 7px; margin-top: 11px; max-height: 220px; overflow: auto; }
 /* Craft-only view (workbench / quick craft): the inventory grid and
    its Quick craft button leave the box, so the craft list gets the

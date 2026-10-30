@@ -8,6 +8,7 @@ const G = (inner) => `<svg class="di" viewBox="0 0 48 48" xmlns="http://www.w3.o
 const axe = (head) => G(`<g transform="rotate(28 24 24)"><rect x="21" y="8" width="6" height="32" rx="2" fill="#8a5a2b"/><path d="M27 10 L40 14 L40 26 L27 24 Z" fill="${head}"/><rect x="21" y="8" width="6" height="32" rx="2"/></g>`);
 const pick = (head) => G(`<g transform="rotate(28 24 24)"><rect x="21" y="8" width="6" height="32" rx="2" fill="#8a5a2b"/><path d="M24 8 L10 14 L12 19 L24 14 Z" fill="${head}"/><path d="M24 8 L38 14 L36 19 L24 14 Z" fill="${head}"/></g>`);
 const sword = (blade) => G(`<g transform="rotate(28 24 24)"><rect x="21" y="30" width="6" height="12" rx="2" fill="#1a1a24"/><rect x="14" y="28" width="20" height="4" rx="2" fill="#3a3a4a"/><path d="M21 28 L24 6 L27 28 Z" fill="${blade}"/></g>`);
+const armor = (plate, line) => G(`<path d="M15 8 L33 8 L37 16 L35 40 L13 40 L11 16 Z" fill="${plate}"/><line x1="24" y1="8" x2="24" y2="40" stroke="${line}"/><line x1="13" y1="24" x2="35" y2="24" stroke="${line}"/><rect x="9" y="11" width="9" height="7" rx="2" fill="${plate}"/><rect x="30" y="11" width="9" height="7" rx="2" fill="${plate}"/>`);
 const sack = (body, knot) => G(`<path d="M14 18 Q14 12 24 12 Q34 12 34 18 L36 34 Q36 40 30 40 L18 40 Q12 40 12 34 Z" fill="${body}"/><path d="M20 12 Q24 7 28 12" fill="${knot}"/><line x1="16" y1="26" x2="32" y2="26"/><line x1="17" y1="32" x2="31" y2="32"/>`);
 const wallBase = (inner) => G(`<rect x="7" y="8" width="34" height="32" rx="2" fill="#e8ddc8"/>${inner}`);
 
@@ -56,6 +57,8 @@ export const ICONS = {
   sword_wood: sword('#8a5a2b'),
   sword_stone: sword('#9aa0a8'),
   sword_iron: sword('#c8ccd2'),
+  armor_stone: armor('#8a8d92', '#5c5f64'),
+  armor_iron: armor('#c8ccd2', '#7d8288'),
   portal_command: G(`<rect x="9" y="12" width="30" height="26" rx="3" fill="#3a3a4a"/><rect x="15" y="18" width="10" height="10" rx="2" fill="#7a5cff"/><g fill="#b07aff"><circle cx="30" cy="20" r="1.6"/><circle cx="34" cy="20" r="1.6"/><circle cx="30" cy="24" r="1.6"/><circle cx="34" cy="24" r="1.6"/></g><circle cx="36" cy="34" r="1.8" fill="#b07aff"/>`),
 };
 

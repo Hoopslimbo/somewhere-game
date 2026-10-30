@@ -38,7 +38,7 @@ let darkenedTimer = 90; // seconds until the next Darkened spawn check (Flipped 
 const P = {
   pos: new THREE.Vector3(), vel: new THREE.Vector3(), yaw: 0, pitch: -0.15,
   hp: 100, hunger: 100, money: 50, onGround: false, fallStart: 0,
-  inv: [], hotbar: [], perm: [null, null, null], hasBackpack: false,
+  inv: [], hotbar: [], perm: [null, null, null], armor: null, hasBackpack: false,
   day: 1, dead: false, carKey: false, houseKey: false, landOwned: false,
 };
 
@@ -89,7 +89,7 @@ const MAX_STACK = 70; // max items per slot for anything stackable
 function addItem(id, n = 1) {
   if (id === 'money') { P.money += n; updateHUD(); return true; }
   const def = ITEMS[id];
-  if (def && def.tool && !def.temp) { // tools don't stack — except temp stones, which do
+  if (def && (def.tool || def.nostack) && !def.temp) { // tools and armor don't stack — except temp stones, which do
     for (let i = 0; i < n; i++) {
       const slot = { id, n: 1, dur: def.maxDur };
       if (!pushToInv(slot)) return false;
@@ -553,7 +553,8 @@ function renderHelp() {
   <b>1–7</b> hotbar · <b>8, 9, 0</b> permanent slots (car key, house key, phone) · <b>Scroll</b> switch slot<br>
   <b>I</b> backpack · <b>B</b> build mode · <b>Q</b> quick craft · <b>T</b> chat · <b>F</b> friends · <b>Esc</b> or <b>P</b> menu · <b>H</b> this help</p>
   <p>Start: chop trees with your wooden axe. Use the gold bench near spawn to craft walls, tools and machines. Place a vehicle machine, craft a car, and your car key appears in a permanent slot. Watch hunger — eat apples to stay full and regen health.</p>
-  <p><b>Phone</b> (craft it with iron at a workbench): select it and <b>right-click</b> to open it. <b>Portal command center</b> (workbench: 4 iron + 4 wood): place it, use its keypad, and walk into the portal to reach The Flipped — a mirrored world of fire and darkness. There, the Darkened hunt you; beat one to earn the Shadow Sword, which poisons enemies. In The Flipped, your phone's <b>Portal Recall</b> calls a portal back to your arrival spot — or drags you home if you're far away.</p>`;
+  <p><b>Phone</b> (craft it with iron at a workbench): select it and <b>right-click</b> to open it. <b>Portal command center</b> (workbench: 4 iron + 4 wood): place it, use its keypad, and walk into the portal to reach The Flipped — a mirrored world of fire and darkness. There, the Darkened hunt you; beat one to earn the Shadow Sword, which poisons enemies. In The Flipped, your phone's <b>Portal Recall</b> calls a portal back to your arrival spot — or drags you home if you're far away.</p>
+  <p><b>Armor</b> (workbench: Stone Armor from 6 stone, Iron Armor from 6 iron): drag a set onto the <b>Armor</b> slot in your inventory to wear it. Stone cuts damage by 25%, Iron by 50% — and a set wears out with every hit you take, so keep a spare.</p>`;
 }
 
 // ---------- Pause menu (Minecraft Bedrock-style) ----------
@@ -1098,9 +1099,27 @@ function collideWorld() {
   }
 }
 function hurt(dmg, cause) {
+  // Armor (2026-10-30): a worn set cuts ALL damage (enemy hits and
+  // falls) by its reduction, never below 1, and loses 1 durability
+  // per hit — same wear rhythm as tools, but its own break path (it
+  // is not the selected slot, so damageTool would remove the wrong item).
+  if (P.armor) {
+    const def = ITEMS[P.armor.id];
+    if (def && def.reduce) dmg = Math.max(1, Math.round(dmg * (1 - def.reduce)));
+    wearArmor();
+  }
   P.hp -= dmg;
   updateHUD();
   if (P.hp <= 0) die(cause);
+}
+function wearArmor() {
+  if (!P.armor) return;
+  P.armor.dur -= 1;
+  if (P.armor.dur <= 0) {
+    toast(`Your ${ITEMS[P.armor.id].name.toLowerCase()} broke!`);
+    P.armor = null;
+    renderArmorSlot();
+  }
 }
 function die(cause) {
   P.dead = true;
@@ -1110,6 +1129,8 @@ function die(cause) {
       if (s) dropItem(s.id, s.n, P.pos.x + (Math.random() - 0.5) * 3, P.pos.z + (Math.random() - 0.5) * 3);
     }
     P.inv = []; P.hotbar = [];
+    // Worn armor drops like everything else (it is not a permanent slot).
+    if (P.armor) { dropItem(P.armor.id, 1, P.pos.x + (Math.random() - 0.5) * 3, P.pos.z + (Math.random() - 0.5) * 3); P.armor = null; renderArmorSlot(); }
   }
   setTimeout(() => {
     const sp = world.spawn;
@@ -1197,6 +1218,8 @@ function dropMeshFor(id) {
         : dropTexMat(woodTex(), 0xffffff, 0.9)); break;
     case 'floor': bx(0.44, 0.05, 0.44, wood); break;
     case 'roof': { const cone = new THREE.Mesh(new THREE.ConeGeometry(0.32, 0.2, 4), dropTexMat(shingleTintedTex(), 0xffffff, 0.9)); cone.rotation.y = Math.PI / 4; cone.castShadow = true; g.add(cone); break; }
+    case 'armor_stone': bx(0.4, 0.34, 0.08, M(0x8a8d92, 0.9), 0, 0.05, 0); bx(0.46, 0.08, 0.1, M(0x6e7278, 0.9), 0, 0.24, 0); break;
+    case 'armor_iron': bx(0.4, 0.34, 0.08, M(0xc8ccd2, 0.4, 0.7), 0, 0.05, 0); bx(0.46, 0.08, 0.1, M(0x9aa0a8, 0.4, 0.7), 0, 0.24, 0); break;
     default: bx(0.32, 0.32, 0.32, dropTexMat(goldLightTex(), 0xd8b25a, 0.8));
   }
   return g;
@@ -2757,7 +2780,8 @@ function openChestPanel(title, chest, source) {
     d.ondrop = (e) => {
       e.preventDefault();
       d.classList.remove('drag-over');
-      if (!dragSrc || (dragSrc.where === where && dragSrc.idx === idx)) { dragSrc = null; return; }
+      // Worn armor can't go straight into a chest — unequip it in your inventory first.
+      if (!dragSrc || dragSrc.where === 'armor' || (dragSrc.where === where && dragSrc.idx === idx)) { dragSrc = null; return; }
       const a = arrOf(dragSrc.where), b = arrOf(where);
       const s = a[dragSrc.idx];
       if (s) {
@@ -2766,7 +2790,7 @@ function openChestPanel(title, chest, source) {
         // your side converts them to money (same as Take does).
         if ((where === 'hot' || where === 'inv') && s.id === 'money') { P.money += s.n; a[dragSrc.idx] = null; }
         else if (!t) { b[idx] = s; a[dragSrc.idx] = null; }
-        else if (t.id === s.id && !ITEMS[s.id].tool) { t.n += s.n; a[dragSrc.idx] = null; } // merge stacks
+        else if (t.id === s.id && !ITEMS[s.id].tool && !ITEMS[s.id].nostack) { t.n += s.n; a[dragSrc.idx] = null; } // merge stacks
         else { a[dragSrc.idx] = t; b[idx] = s; } // swap
       }
       dragSrc = null;
@@ -2872,6 +2896,20 @@ function renderInvGrid() {
       // Chest-panel drags never land here (the chest UI handles its own
       // drops); only inventory-internal drags reorder this grid.
       if (!dragSrc || dragSrc.where === 'chest' || (dragSrc.where === kind && dragSrc.idx === idx)) { dragSrc = null; return; }
+      // Dragging the worn armor out: it swaps only with an empty slot
+      // or another armor set — a sword can't go in the armor slot.
+      if (dragSrc.where === 'armor') {
+        if (!P.armor) { dragSrc = null; return; }
+        const b = invArr(kind);
+        const t = b[idx];
+        if (t && !ITEMS[t.id].armor) { toast('Only armor can be worn.'); dragSrc = null; return; }
+        b[idx] = P.armor;
+        P.armor = t || null;
+        dragSrc = null;
+        dragDroppedAt = performance.now();
+        renderInvGrid(); updateHUD(); saveGame();
+        return;
+      }
       const a = invArr(dragSrc.where), b = invArr(kind);
       const tmp = a[dragSrc.idx];
       a[dragSrc.idx] = b[idx];
@@ -2907,6 +2945,7 @@ function renderInvGrid() {
       ? (craftOpened && craftOpened.quick ? 'Quick Craft' : 'Workbench')
       : (P.hasBackpack ? 'Backpack' : 'Inventory');
   }
+  renderArmorSlot();
   const note = document.createElement('p');
   note.className = 'fine';
   note.style.gridColumn = '1 / -1';
@@ -2914,6 +2953,44 @@ function renderInvGrid() {
     ? `Backpack: 40 normal slots. Drag items to rearrange them. Permanent slots (car key, house key) live in the top bar — press 8, 9, 0 to select them.`
     : `13 normal slots — craft a Backpack (4 leather) to expand to 40. Drag items to rearrange them. Permanent slots (car key, house key) live in the top bar — press 8, 9, 0 to select them.`;
   grid.appendChild(note);
+}
+// Armor slot (2026-10-30): one worn full set, dragged on/off like any
+// inventory slot. It lives in the inventory panel, not the hotbar —
+// the permanent slots already own the top bar.
+function renderArmorSlot() {
+  const row = $('armor-row');
+  if (!row) return;
+  const a = P.armor;
+  const def = a ? ITEMS[a.id] : null;
+  row.innerHTML = `<span class="armor-label">Armor</span><div class="slot armor-slot" title="${a ? def.name : 'Drag armor here to wear it'}">${a
+    ? `<span class="ic">${itemIcon(a.id)}</span><span class="lbl">${def.name}</span>${a.dur && def.maxDur ? `<span class="dur"><i style="width:${a.dur / def.maxDur * 100}%"></i></span>` : ''}`
+    : `<span class="lbl">Empty</span>`}</div><span class="fine">${a ? `${Math.round(def.reduce * 100)}% less damage · ${a.dur}/${def.maxDur} hits left` : 'Drag a Stone or Iron Armor set here.'}</span>`;
+  const slotEl = row.querySelector('.armor-slot');
+  slotEl.draggable = true;
+  slotEl.ondragstart = (e) => {
+    if (!P.armor) return;
+    dragSrc = { where: 'armor', idx: 0 };
+    try { e.dataTransfer.setData('text/plain', 'armor:0'); } catch { /* ignore */ }
+    e.dataTransfer.effectAllowed = 'move';
+    slotEl.classList.add('dragging');
+  };
+  slotEl.ondragover = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; slotEl.classList.add('drag-over'); };
+  slotEl.ondragleave = () => slotEl.classList.remove('drag-over');
+  slotEl.ondrop = (e) => {
+    e.preventDefault();
+    slotEl.classList.remove('drag-over');
+    if (!dragSrc || dragSrc.where === 'armor' || dragSrc.where === 'chest') { dragSrc = null; return; }
+    const arr = invArr(dragSrc.where);
+    const s = arr[dragSrc.idx];
+    if (!s || !ITEMS[s.id].armor) { if (s) toast('Only armor can be worn.'); dragSrc = null; return; }
+    arr[dragSrc.idx] = P.armor;
+    P.armor = s;
+    dragSrc = null;
+    dragDroppedAt = performance.now();
+    toast(`${ITEMS[s.id].name} equipped — ${Math.round(ITEMS[s.id].reduce * 100)}% less damage.`);
+    renderInvGrid(); updateHUD(); saveGame();
+  };
+  slotEl.ondragend = () => { dragSrc = null; dragDroppedAt = performance.now(); slotEl.classList.remove('dragging'); };
 }
 $('inv-close').onclick = () => { toggleInventory(false); requestGameLock(); };
 $('btn-quickcraft').onclick = () => openCraft(true, { by: 'mouse', key: null });
@@ -2925,6 +3002,7 @@ $('btn-quickcraft').onclick = () => openCraft(true, { by: 'mouse', key: null });
 let craftCat = 'All';
 const CRAFT_CATS = [
   ['Tools', ['axe_stone', 'pickaxe_wood', 'pickaxe', 'shovel', 'hoe', 'backpack', 'phone', 'sword_wood', 'sword_stone', 'sword_iron']],
+  ['Armor', ['armor_stone', 'armor_iron']],
   ['Building', ['wall_wood', 'wall_brick', 'wall_steel', 'wall_window', 'wall_door', 'wall_ice', 'floor', 'roof']],
   ['Furniture', ['chest', 'house_kit']],
   ['Machines', ['workbench', 'vehicle_machine', 'gas_pump', 'portal_command']],
@@ -3119,7 +3197,7 @@ function saveGame() {
   // on the base key, The Flipped's on a separate key — building in one
   // world never wipes the other. Old single-key saves load as the
   // normal world's state, unchanged.
-  const player = { inv: P.inv, hotbar: P.hotbar, perm: P.perm, money: P.money, hp: P.hp, hunger: P.hunger, hasBackpack: P.hasBackpack, landOwned: P.landOwned };
+  const player = { inv: P.inv, hotbar: P.hotbar, perm: P.perm, armor: P.armor, money: P.money, hp: P.hp, hunger: P.hunger, hasBackpack: P.hasBackpack, landOwned: P.landOwned };
   const worldState = {
     placed: placed.map((p) => ({ itemId: p.itemId, x: p.x, z: p.z, y: p.y, rotY: p.rotY || 0, color: p.color, contents: p.contents, hp: p.hp })),
     crops: crops.filter((c) => c.seed).map((c) => ({ x: c.x, z: c.z, seed: c.seed, planted: c.planted })),
@@ -3138,12 +3216,12 @@ function loadSave() {
   const s = load('somewhere_save_' + W.id, null);
   // Starter kit: wooden axe, the weakest axe, just so you can chop wood
   P.hotbar = [{ id: 'axe_wood', n: 1, dur: ITEMS.axe_wood.maxDur }];
-  P.inv = []; P.perm = [null, null, null]; P.money = 50; P.hp = 100; P.hunger = 100;
+  P.inv = []; P.perm = [null, null, null]; P.armor = null; P.money = 50; P.hp = 100; P.hunger = 100;
   if (!s) return;
   P.inv = s.inv || []; P.hotbar = s.hotbar?.length ? s.hotbar : P.hotbar;
   P.perm = s.perm || [null, null, null];
   P.money = s.money ?? 50; P.hp = s.hp ?? 100; P.hunger = s.hunger ?? 100;
-  P.hasBackpack = !!s.hasBackpack; P.landOwned = !!s.landOwned;
+  P.hasBackpack = !!s.hasBackpack; P.landOwned = !!s.landOwned; P.armor = s.armor || null;
   // Dimension world state: normal reads the base save; The Flipped
   // reads its own key, and a missing one means a fresh Flipped world.
   const ws = (W.dim || 'normal') === 'normal' ? s : load('somewhere_save_' + W.id + '_flipped', null);
