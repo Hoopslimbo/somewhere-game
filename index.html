@@ -137,6 +137,7 @@
       <div class="settings-grid">
         <label>Brightness <input id="set-brightness" type="range" min="50" max="150" value="100"> <span id="brightness-val">100%</span></label>
         <label>Master audio <input id="set-audio" type="range" min="0" max="100" value="80"> <span id="audio-val">80%</span></label>
+        <label class="check"><input id="set-mute" type="checkbox"> Mute</label>
         <label>Microphone <select id="set-mic"><option>Default microphone</option></select></label>
       </div>
       <h4>Keybinds — click a key, then press a new one</h4>
@@ -253,6 +254,7 @@
 <section id="game-screen" class="screen hidden">
   <canvas id="game-canvas"></canvas>
   <div class="vignette"></div>
+  <div id="damage-flash"></div>
   <div id="crosshair">+</div>
   <div id="interact-prompt" class="prompt hidden"></div>
   <div id="center-toast" class="center-toast hidden"></div>
@@ -325,6 +327,7 @@
       <h3>Settings</h3>
       <label>Brightness <input id="pause-set-brightness" type="range" min="50" max="150" value="100"> <span id="pause-brightness-val">100%</span></label>
       <label>Master Audio <input id="pause-set-audio" type="range" min="0" max="100" value="80"> <span id="pause-audio-val">80%</span></label>
+      <label class="check"><input id="pause-set-mute" type="checkbox"> Mute</label>
       <label class="check"><input id="pause-set-keepinv" type="checkbox"> Keep Inventory on Death</label>
       <label class="check"><input id="pause-set-friendly" type="checkbox"> Friendly Fire</label>
       <p class="fine">World settings save to this world right away.</p>

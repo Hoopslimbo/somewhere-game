@@ -4,6 +4,7 @@ import { buildWorld, makeSkyDome, heightAt } from './world.js';
 import { load, save, uid, hasBadWord, initialAvatar } from './data.js';
 import { uiIcon } from './icons.js';
 import { envTex } from './textures.js';
+import { setVolume, setMuted } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
 const S = window.Somewhere = window.Somewhere || {};
@@ -1042,10 +1043,13 @@ function applySettings() {
   document.querySelectorAll('canvas').forEach((c) => { c.style.filter = `brightness(${b}%)`; });
   $('set-brightness').value = b; $('brightness-val').textContent = b + '%';
   $('set-audio').value = S.settings.audio; $('audio-val').textContent = S.settings.audio + '%';
+  $('set-mute').checked = !!S.settings.muted;
+  setVolume(S.settings.audio ?? 80); setMuted(!!S.settings.muted);
   renderCustomize();
 }
 $('set-brightness').oninput = (e) => { S.settings.brightness = +e.target.value; save('somewhere_settings', S.settings); applySettings(); };
-$('set-audio').oninput = (e) => { S.settings.audio = +e.target.value; $('audio-val').textContent = e.target.value + '%'; save('somewhere_settings', S.settings); };
+$('set-audio').oninput = (e) => { S.settings.audio = +e.target.value; $('audio-val').textContent = e.target.value + '%'; save('somewhere_settings', S.settings); setVolume(S.settings.audio); };
+$('set-mute').onchange = (e) => { S.settings.muted = e.target.checked; save('somewhere_settings', S.settings); setMuted(S.settings.muted); };
 $('set-username').onchange = (e) => {
   const v = e.target.value.trim();
   if (!v || v.length > 15 || hasBadWord(v)) { alert('Invalid username (max 15 characters, no blocked words).'); e.target.value = S.session.username; return; }

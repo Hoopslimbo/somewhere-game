@@ -3,6 +3,7 @@ import { buildCharacter } from './character.js';
 import { buildWorld, heightAt, biomeAt, makeSkyDome, hideTreeInstances, refreshTreeInstances } from './world.js';
 import { ITEMS, RECIPES, QUICK_RECIPES, cleanText, load, save } from './data.js';
 import { itemIcon } from './icons.js';
+import { sfx, setVolume, setMuted, startEngine, setEngineLevel, stopEngine } from './audio.js';
 import { woodTex, brickTintedTex, shingleTintedTex, steelTex, goldLightTex, panelTex, pumpPanelTex, sidingTex, shadowTex, frostTex, soilTex, swirlTex, flakeTex, treadTex, appleTex, carrotTex, wheatTex, leatherTex, weaveTex, phoneTex, woodLightTex, stoneLightTex, leafLightTex, envTex, normalMapFor } from './textures.js';
 
 const $ = (id) => document.getElementById(id);
@@ -11,6 +12,9 @@ const S = window.Somewhere;
 // ---------- State ----------
 let scene, camera, renderer, clock, RAF = null;
 let world, player, keys = {}, locked = false, started = false;
+// Feel (redo slice 3): walk-bob phase/amplitude, footstep distance
+// accumulator, landing-dip amount, damage-flash timeout.
+let bobPhase = 0, bobAmp = 0, stepAcc = 0, landDip = 0, flashTimer = null;
 let W = null; // world def
 let time = 600; // seconds into day cycle (30 min = 1800s); start 08:00
 let placed = [], cars = [], crops = [], drops = [];
@@ -214,6 +218,8 @@ window.startGame = async function (worldDef, onProgress) {
     if (params.get('shot') === 'inventory') setTimeout(() => toggleInventory(true), 800);
     if (params.get('shot') === 'build') setTimeout(() => setBuildMode(true), 800);
     clock = new THREE.Clock();
+    // Audio follows the existing slider + mute (redo slice 3).
+    setVolume(S.settings.audio ?? 80); setMuted(!!S.settings.muted);
     loop();
   } catch (err) {
     // Never leave a half-started game running: no loop is started on
@@ -564,6 +570,11 @@ function bindInput() {
   $('pause-set-audio').oninput = (e) => {
     S.settings.audio = +e.target.value; save('somewhere_settings', S.settings);
     $('pause-audio-val').textContent = e.target.value + '%';
+    setVolume(S.settings.audio);
+  };
+  $('pause-set-mute').onchange = (e) => {
+    S.settings.muted = e.target.checked; save('somewhere_settings', S.settings);
+    setMuted(S.settings.muted);
   };
 }
 function requestGameLock() {
@@ -616,6 +627,7 @@ function openPauseSettings() {
   $('pause-brightness-val').textContent = (S.settings.brightness || 100) + '%';
   $('pause-set-audio').value = S.settings.audio ?? 80;
   $('pause-audio-val').textContent = (S.settings.audio ?? 80) + '%';
+  $('pause-set-mute').checked = !!S.settings.muted;
   $('pause-menu').classList.add('hidden');
   $('pause-settings').classList.remove('hidden');
 }
@@ -652,6 +664,7 @@ async function backToLobby() {
   $('pause-settings').classList.add('hidden');
   if (RAF) { cancelAnimationFrame(RAF); RAF = null; }
   started = false;
+  stopEngine();
   darkened = []; closePortal();
   // Save-before-leave ordering unchanged: the save lands before the
   // game screen hides and before the lobby shows.
@@ -697,6 +710,7 @@ async function backToLobby() {
 // Portal keypad: rendered into the shared shop panel, like the shop
 // and vehicle-machine panels. The current dimension is not selectable.
 function openPortalKeypad(machine, source) {
+  sfx('click');
   openMousePanel(source);
   const panel = $('shop-panel');
   const dim = W?.dim || 'normal';
@@ -719,6 +733,7 @@ function openPortal(targetDim, machine) {
   // (d < 1.0) travels — no need to step out first, since opening
   // is deliberate; near-passes (d >= 1.0) never trigger.
   spawnPortal(machine.x, machine.z, targetDim, machine);
+  sfx('portal');
   toast('Portal open — walk into it.');
 }
 function spawnPortal(x, z, targetDim, machine, facing) {
@@ -927,6 +942,7 @@ async function switchDimension(dim, arrivePos) {
 // Phone menu: opened by right-click while the phone's permanent slot
 // is selected; right-click again while it is open closes it.
 function openPhoneMenu() {
+  sfx('phone');
   document.exitPointerLock?.();
   const panel = $('phone-panel');
   const inFlipped = W?.dim === 'flipped';
@@ -981,7 +997,7 @@ function spawnDarkened() {
   group.position.set(x, h, z);
   group.rotation.y = Math.atan2(P.pos.x - x, P.pos.z - z);
   scene.add(group);
-  darkened.push({ group, hp: 30, lastHit: 0, poisonUntil: 0, poisonAcc: 0, nextTeleport: performance.now() + 10000 + Math.random() * 10000 });
+  darkened.push({ group, hp: 30, lastHit: 0, poisonUntil: 0, poisonAcc: 0, nextTeleport: performance.now() + 10000 + Math.random() * 10000, shadowM, flashUntil: 0 });
   chatMsg('System', 'Something moves in the dark…', true);
 }
 function killDarkened(d) {
@@ -1007,6 +1023,14 @@ function hitDarkened(d) {
   const power = sel ? (ITEMS[sel.id]?.power ?? 0.5) : 0.5;
   triggerSwing();
   d.hp -= power;
+  // Feel (redo slice 3): hit sound, emissive hit-flash, small knockback.
+  sfx('hit');
+  d.flashUntil = now + 150;
+  const kbx = d.group.position.x - P.pos.x, kbz = d.group.position.z - P.pos.z;
+  const kl = Math.hypot(kbx, kbz) || 1;
+  d.group.position.x += kbx / kl * 0.7;
+  d.group.position.z += kbz / kl * 0.7;
+  d.group.position.y = groundY(d.group.position.x, d.group.position.z);
   if (sel && sel.id === 'shadow_sword') {
     if (d.poisonUntil < performance.now()) toast('The Darkened is poisoned!');
     d.poisonUntil = performance.now() + 5000;
@@ -1018,6 +1042,13 @@ function updateDarkened(dt) {
   const now = performance.now();
   for (let i = darkened.length - 1; i >= 0; i--) {
     const d = darkened[i];
+    // Hit-flash decay (redo slice 3): emissive pulse fading over 150ms.
+    if (d.shadowM) {
+      if (d.flashUntil > now) {
+        const f = (d.flashUntil - now) / 150;
+        d.shadowM.emissive.setRGB(0.6 * f, 0.6 * f, 0.6 * f);
+      } else if (d.shadowM.emissive.getHex() !== 0) d.shadowM.emissive.setRGB(0, 0, 0);
+    }
     // Shadow Sword poison: 1 damage per second for 5 seconds.
     if (d.poisonUntil > now) {
       d.poisonAcc += dt;
@@ -1255,6 +1286,8 @@ function updatePlayer(dt) {
     if (P.pos.y <= g) {
       const fallH = P.fallStart - g;
       P.pos.y = g; P.vel.y = 0; P.onGround = true;
+      // Landing dip (redo slice 3): a small camera dip on hard landings.
+      if (fallH > 0.8) landDip = Math.min(0.22, fallH * 0.03);
       if (fallH > 3.5) {
         const dmg = Math.round((fallH - 3.5) * 6);
         hurt(dmg, 'the fall');
@@ -1268,12 +1301,24 @@ function updatePlayer(dt) {
   // Regen at full hunger
   if (P.hunger >= 95 && P.hp < 100) P.hp = Math.min(100, P.hp + dt * 0.8);
   if (P.hunger <= 0) P.hp = Math.max(1, P.hp - dt * 0.5);
+  // Footsteps + walk bob (redo slice 3): a soft step every ~2.4 units
+  // while grounded and moving; bob amplitude eases in and out.
+  const moving = (fx || fz) && P.onGround;
+  if (moving) {
+    stepAcc += speed * dt;
+    if (stepAcc > 2.4) { stepAcc = 0; sfx('step'); }
+    bobPhase += speed * dt * 1.7;
+    bobAmp += (1 - bobAmp) * Math.min(1, dt * 8);
+  } else {
+    bobAmp += (0 - bobAmp) * Math.min(1, dt * 8);
+  }
+  landDip *= Math.exp(-dt * 7);
   // Character mesh stays hidden (first person) — keep position synced for
   // anything that references the player group (sun follow uses P.pos)
   player.position.copy(P.pos);
   player.rotation.y = P.yaw + Math.PI;
   // Camera: FIRST PERSON — head height, mouse look, no third-person orbit
-  camera.position.set(P.pos.x, P.pos.y + curEyeH, P.pos.z);
+  camera.position.set(P.pos.x, P.pos.y + curEyeH + Math.sin(bobPhase * 2) * 0.03 * bobAmp - landDip, P.pos.z);
   camera.rotation.order = 'YXZ';
   camera.rotation.set(P.pitch, P.yaw, 0);
   updateViewmodel();
@@ -1325,7 +1370,18 @@ function hurt(dmg, cause) {
   }
   P.hp -= dmg;
   updateHUD();
+  // Feel (redo slice 3): hurt sound + red edge pulse.
+  sfx('hurt');
+  damageFlash();
   if (P.hp <= 0) die(cause);
+}
+// Red edge pulse on hurt; the low-health pulse lives on body.low-health
+// (see updateHUDDynamic) so the two never fight over one element.
+function damageFlash() {
+  const el = $('damage-flash'); if (!el) return;
+  el.style.opacity = '0.55';
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => { el.style.opacity = P.hp <= 25 && !P.dead ? '0.22' : '0'; }, 130);
 }
 function wearArmor() {
   if (!P.armor) return;
@@ -1337,6 +1393,7 @@ function wearArmor() {
   }
 }
 function die(cause) {
+  stopEngine();
   P.dead = true;
   chatMsg('System', `You died (${cause}). Respawning at the gold bench…`, true);
   if (!W.keepInv) {
@@ -1647,8 +1704,11 @@ function updateViewmodel() {
       const base = g.userData.baseRot || (g.userData.baseRot = g.rotation.clone());
       const basePos = g.userData.basePos || (g.userData.basePos = g.position.clone());
       g.rotation.x = base.x - swingCurve * 0.85;
-      g.rotation.z = base.z + swingCurve * 0.15;
-      g.position.y = basePos.y - swingCurve * 0.07;
+      // Idle sway + walk bob (redo slice 3): recomputed from base every
+      // frame, never accumulated, so the pose can't drift.
+      g.rotation.z = base.z + swingCurve * 0.15 + Math.sin(clock.elapsedTime * 1.3) * (0.008 + bobAmp * 0.01);
+      g.position.y = basePos.y - swingCurve * 0.07 + Math.abs(Math.cos(bobPhase)) * 0.012 * bobAmp;
+      g.position.x = basePos.x + Math.sin(bobPhase) * 0.01 * bobAmp;
     }
   }
 }
@@ -1848,22 +1908,22 @@ function startHoldAction() {
       const power = sel && ITEMS[sel.id]?.tool ? ITEMS[sel.id].power : 0.5;
       triggerSwing();
       if (sel && ITEMS[sel.id]?.tool) damageTool(sel);
-      hitPlaced(holdRef, power);
+      hitPlaced(holdRef, power); sfx('hit');
     } else if (holdKind === 'ground') {
       if (!target || target.kind !== 'ground' || target.x !== holdRef.x || target.z !== holdRef.z) { stopHoldAction(); return; }
       const sel = selectedItem();
       if (!sel || ITEMS[sel.id]?.tool !== 'shovel') { stopHoldAction(); return; }
-      triggerSwing(); digGround(holdRef, sel);
+      triggerSwing(); digGround(holdRef, sel); sfx('dig');
     } else {
       const list = holdKind === 'tree' ? world.trees : world.rocks;
       if (!target || target.kind !== holdKind || target.ref !== holdRef || !list.includes(holdRef)) { stopHoldAction(); return; }
       const sel = selectedItem();
       if (holdKind === 'tree') {
         if (!sel || ITEMS[sel.id]?.tool !== 'axe') { stopHoldAction(); return; }
-        triggerSwing(); chopTree(target.ref, sel);
+        triggerSwing(); chopTree(target.ref, sel); sfx('chop');
       } else {
         if (!sel || ITEMS[sel.id]?.tool !== 'pickaxe') { stopHoldAction(); return; }
-        triggerSwing(); mineRock(target.ref, sel);
+        triggerSwing(); mineRock(target.ref, sel); sfx('mine');
       }
     }
     holdTimer = setTimeout(tick, 420); // repeat swings while held
@@ -1955,7 +2015,7 @@ function doInteract(source) {
   } else if (target.kind === 'groundstone') {
     scene.remove(target.ref.mesh);
     world.groundStones = world.groundStones.filter((s) => s !== target.ref);
-    addItem('ground_stone');
+    addItem('ground_stone'); sfx('pickup');
     toast('Picked up a stone. It can chop a tree in a pinch — slower, and it breaks after that tree is fully chopped.');
   } else if (target.kind === 'drop') {
     // Pickup is right-click ONLY — E on a drop does nothing.
@@ -1964,6 +2024,7 @@ function doInteract(source) {
     if (addItem(d.id, d.n)) {
       scene.remove(d.mesh);
       drops.splice(drops.indexOf(d), 1);
+      sfx('pickup');
       chatMsg('System', `Picked up ${d.n}× ${ITEMS[d.id].name}.`, true);
       updateHUD();
     } else {
@@ -1987,6 +2048,7 @@ function chopTree(t, toolSlot) {
   const isTempStone = toolSlot && ITEMS[toolSlot.id].temp;
   if (!isTempStone) damageTool(toolSlot);
   if (t.hp <= 0) {
+    sfx('break');
     hideTreeInstances(t); // trees are instanced now — hide, don't remove a group
     world.trees = world.trees.filter((x) => x !== t);
     const wood = 2 + Math.floor(Math.random() * 3);
@@ -2020,6 +2082,7 @@ function mineRock(r, toolSlot) {
   r.hp -= ITEMS[toolSlot.id].power;
   damageTool(toolSlot);
   if (r.hp <= 0) {
+    sfx('break');
     scene.remove(r.mesh);
     world.rocks = world.rocks.filter((x) => x !== r);
     if (r.iron) { dropItem('iron', 2, r.x, r.z); }
@@ -2045,6 +2108,7 @@ function hitPlaced(p, power) {
   if (p.hp <= 0) { stopHoldAction(); smashPlaced(p); }
 }
 function smashPlaced(p) {
+  sfx('break');
   scene.remove(p.mesh);
   placed = placed.filter((x) => x !== p);
   // Debris gives back a few materials, never more than the piece was made of
@@ -2659,6 +2723,7 @@ function placeGhostPiece() {
   const { x, z, y } = ghostAim();
   if (!removeCount(buildSel, 1)) { toast('Out of that piece.'); return; }
   const mesh = buildPieceMesh(buildSel);
+  sfx('place');
   mesh.position.set(x, y, z);
   mesh.rotation.y = P.yaw; // placed piece keeps the ghost's facing: front toward the player
   scene.add(mesh);
@@ -2782,11 +2847,13 @@ function enterCar(car) {
   if (car.locked) { toast('That car is locked.'); return; }
   if (car.fuel <= 0) { toast('Out of fuel — use a gas pump or jerrycan.'); return; }
   driving = car;
+  startEngine();
   $('fuel-wrap').classList.remove('hidden');
   toast('Driving! WASD to drive, E to get out, Shift for boost.');
 }
 function exitCar() {
   if (!driving) return;
+  stopEngine();
   const car = driving; driving = null;
   // Player body stays hidden — first person on foot too
   P.pos.set(car.group.position.x + 2, groundY(car.group.position.x + 2, car.group.position.z + 1), car.group.position.z + 1);
@@ -2818,6 +2885,8 @@ function updateDriving(dt) {
   }
   car.group.position.y = groundY(car.group.position.x, car.group.position.z, car.group.position.y);
   car.group.rotation.y = car.yaw;
+  // Engine hum follows speed (redo slice 3).
+  setEngineLevel(Math.min(1, Math.abs(car.speed) / 15));
   for (const w of car.wheels) w.rotation.x += car.speed * dt * 2;
   // Driver's view — first person even while driving
   camera.position.set(car.group.position.x, car.group.position.y + 1.6, car.group.position.z);
@@ -3303,6 +3372,7 @@ function renderCraftRows(quick) {
         for (const [c, n] of taken) if (n > 0) addItem(c, n);
         if (!ITEMS[id]?.tool) toast('Inventory full — make room first.'); // tool outputs already toasted by pushToInv
       }
+      sfx('craft');
       openCraft(quick, craftOpened); updateHUD();
     };
     list.appendChild(row);
@@ -3372,6 +3442,8 @@ function updateHUDDynamic() {
   $('hunger-num').textContent = Math.round(Math.max(0, P.hunger));
   $('money').innerHTML = itemIcon('money') + ' ' + P.money;
   if (driving) $('fuel-fill').style.width = Math.max(0, driving.fuel) + '%';
+  // Low-health warning (redo slice 3): red pulsing vignette.
+  document.body.classList.toggle('low-health', P.hp <= 25 && !P.dead);
 }
 
 // ---------- Chat / eat ----------
@@ -3406,6 +3478,7 @@ function eatSelected() {
   if (P.hunger >= 100) { toast('Hunger is already full!'); return; }
   P.hunger = Math.min(100, P.hunger + food[sel.id]);
   removeCount(sel.id, 1);
+  sfx('eat');
   chatMsg('System', `Ate ${ITEMS[sel.id].name} (+${food[sel.id]} hunger).`, true);
   updateHUD();
 }
