@@ -11,6 +11,7 @@ export const DEFAULT_CHAR = {
   skin: '#f5cfa0', hair: 'short', hairColor: '#3b2a1a',
   sleeve: 'normal', shirt: '#57b6ff',
   pants: 'sweatpants', pantsColor: '#2b4a6f', shoes: '#1d1a16',
+  hat: 'none', // redo slice 10: 'none' | 'cap' | 'beanie' | 'headphones'
 };
 
 // Polished BLOCKY character (~2.07 units tall). Clean boxy silhouette with
@@ -18,7 +19,7 @@ export const DEFAULT_CHAR = {
 // straight voxel clone), detailed boxy face, and shaped blocky hair and
 // clothing — distinct from a plain Minecraft copy through proportion, color
 // and detail. Front face is +Z. cfg: { skin, hair, hairColor, sleeve, shirt,
-// pants, pantsColor, shoes }
+// pants, pantsColor, shoes, hat }
 
 function mat(color, rough = 0.85) {
   return new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0 });
@@ -206,6 +207,28 @@ export function buildCharacter(cfg = {}) {
   g.userData.arms = arms;
   g.userData.legs = legs;
   g.userData.height = 2.07;
+  // ---- Hats (redo slice 10): exactly three blocky accessories, fixed
+  // colors, rendered after hair so they sit on top of it. Every piece
+  // overlaps the piece below it — no floating bits. Head top is 2.07,
+  // faces x ±0.22, ears at x ±0.245 (outer ±0.27). No new faces.
+  if (c.hat === 'cap') {
+    const capM = mat('#c23b2e', 0.8), brimM = mat(shade('#c23b2e', 0.75), 0.8);
+    box(0.48, 0.14, 0.46, capM, 0, 2.12, 0, g); // dome, overlaps crown
+    box(0.46, 0.05, 0.18, brimM, 0, 2.06, 0.30, g); // brim, front
+    box(0.10, 0.05, 0.05, capM, 0, 2.20, 0, g); // button
+  } else if (c.hat === 'beanie') {
+    const beaM = mat('#37414f', 0.95);
+    box(0.48, 0.14, 0.46, beaM, 0, 2.12, 0, g); // dome
+    box(0.50, 0.08, 0.48, mat(shade('#37414f', 0.8), 0.95), 0, 2.05, 0, g); // folded cuff
+    box(0.16, 0.08, 0.16, beaM, 0, 2.22, 0, g); // pom
+  } else if (c.hat === 'headphones') {
+    const hpM = mat('#1c1e24', 0.6), padM = mat('#3a3f4a', 0.8);
+    box(0.56, 0.05, 0.10, hpM, 0, 2.18, 0, g); // band over the crown
+    box(0.05, 0.30, 0.10, hpM, -0.27, 2.03, 0, g); // left connector
+    box(0.05, 0.30, 0.10, hpM, 0.27, 2.03, 0, g); // right connector
+    box(0.06, 0.20, 0.14, padM, -0.27, 1.88, 0, g); // left cup over the ear
+    box(0.06, 0.20, 0.14, padM, 0.27, 1.88, 0, g); // right cup
+  }
   return g;
 }
 

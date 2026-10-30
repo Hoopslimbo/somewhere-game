@@ -255,6 +255,23 @@ body.low-health .vignette { animation: lowpulse 1.2s ease-in-out infinite; }
 #armor-chip .bar { width: 150px; height: 12px; }
 #game-screen #armor-chip .bar { width: 150px; height: 12px; }
 .fill.armor { background: linear-gradient(90deg, #8a8d92, #c8ccd2); }
+/* Slice 10 HUD: damage numbers, compass bar, minimap. All inside the
+   game screen, pointer-events none except the minimap canvas itself
+   (which takes no input either — it is display-only). */
+#dmg-numbers { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 30; }
+.dmg-num { position: absolute; font-weight: 800; font-size: 20px; text-shadow: 0 2px 4px rgba(0,0,0,.8); transform: translate(-50%, -50%); }
+.dmg-num.enemy { color: #ffe08a; }
+.dmg-num.player { color: #ff6a5e; }
+#compass { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); width: 320px; height: 28px; overflow: hidden; background: rgba(10,15,32,.55); border: 1px solid rgba(255,255,255,.2); border-radius: 10px; pointer-events: none; z-index: 20; }
+#compass-tape { position: absolute; top: 0; bottom: 0; left: 0; will-change: transform; }
+.ctick-label { position: absolute; top: 50%; transform: translate(-50%, -50%); font-size: 12px; font-weight: 800; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
+.ctick { position: absolute; bottom: 3px; width: 1px; height: 8px; background: rgba(255,255,255,.5); }
+#compass-markers { position: absolute; inset: 0; }
+#compass-spawn { position: absolute; top: 50%; width: 8px; height: 8px; border-radius: 50%; background: #46a758; transform: translate(-50%, -50%); box-shadow: 0 0 4px rgba(0,0,0,.6); }
+#compass-portal { position: absolute; top: 50%; width: 9px; height: 9px; background: #a855f7; transform: translate(-50%, -50%) rotate(45deg); box-shadow: 0 0 4px rgba(0,0,0,.6); }
+#compass-caret { position: absolute; left: 50%; top: 0; transform: translateX(-50%); width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 8px solid #fff; }
+#compass-readout { position: absolute; top: 46px; left: 50%; transform: translateX(-50%); font-size: 12px; font-weight: 700; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.8); pointer-events: none; z-index: 20; }
+#minimap { position: absolute; right: 16px; bottom: 16px; width: 140px; height: 140px; border-radius: 12px; border: 1px solid rgba(255,255,255,.25); box-shadow: 0 8px 24px rgba(0,0,0,.35); z-index: 20; pointer-events: none; }
 .hud-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; font-weight: 800; text-shadow: 2px 2px 0 #000; }
 .money { color: #fff; font-family: var(--display); font-size: 18px; letter-spacing: .5px; }
 .chat-box { position: absolute; left: 18px; bottom: 212px; width: 380px; max-width: 60vw; pointer-events: none; }

@@ -1113,6 +1113,7 @@ function renderCustomize() {
   chipRow($('cust-pants'), ['shorts', 'sweatpants'], S.char.pants, (v) => { S.char.pants = v; saveChar(); }, { shorts: 'Shorts', sweatpants: 'Sweatpants' });
   swatchRow($('cust-pantscolor'), PANTS_COLORS, S.char.pantsColor, (c) => { S.char.pantsColor = c; saveChar(); });
   swatchRow($('cust-shoes'), SHOE_COLORS, S.char.shoes, (c) => { S.char.shoes = c; saveChar(); });
+  chipRow($('cust-hat'), ['none', 'cap', 'beanie', 'headphones'], S.char.hat || 'none', (v) => { S.char.hat = v; saveChar(); }, { none: 'None', cap: 'Cap', beanie: 'Beanie', headphones: 'Headphones' });
 }
 function saveChar() { save('somewhere_char', S.char); refreshCharacter(); }
 $('btn-randomize').onclick = () => {
@@ -1121,6 +1122,7 @@ $('btn-randomize').onclick = () => {
     skin: pick(SKIN_TONES), hair: pick(HAIR_STYLES), hairColor: pick(HAIR_COLORS),
     sleeve: pick(['normal', 'long']), shirt: pick(SHIRT_COLORS),
     pants: pick(['shorts', 'sweatpants']), pantsColor: pick(PANTS_COLORS), shoes: pick(SHOE_COLORS),
+    hat: pick(['none', 'none', 'cap', 'beanie', 'headphones']),
   };
   saveChar(); renderCustomize();
 };

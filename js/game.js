@@ -307,6 +307,36 @@ async function initScene(onProgress) {
   const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 2, sizeAttenuation: false, transparent: true, opacity: 0, fog: false, depthWrite: false }));
   stars.frustumCulled = false;
   scene.add(stars); scene.userData.stars = stars;
+  // Visual-only clouds (redo slice 10): soft drifting puffs, one
+  // Points draw, no gameplay effect of any kind — no rain, no storms,
+  // no lightning, just sky decoration like the stars and moon. The
+  // no-weather-systems rule still stands.
+  const cloudCanvas = document.createElement('canvas');
+  cloudCanvas.width = cloudCanvas.height = 128;
+  const cctx = cloudCanvas.getContext('2d');
+  const grad = cctx.createRadialGradient(64, 64, 8, 64, 64, 64);
+  grad.addColorStop(0, 'rgba(255,255,255,0.85)');
+  grad.addColorStop(0.6, 'rgba(255,255,255,0.35)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  cctx.fillStyle = grad; cctx.fillRect(0, 0, 128, 128);
+  const cloudTex = new THREE.CanvasTexture(cloudCanvas);
+  const cloudOffsets = [];
+  let ccx = 0, ccz = 0, ccy = 0;
+  for (let i = 0; i < 60; i++) {
+    if (i % 5 === 0) { // 12 clusters of 5 puffs
+      ccx = (Math.random() - 0.5) * 900; ccz = (Math.random() - 0.5) * 900; ccy = 120 + Math.random() * 60;
+    }
+    cloudOffsets.push({
+      x: ccx + (Math.random() - 0.5) * 70,
+      y: ccy + (Math.random() - 0.5) * 16,
+      z: ccz + (Math.random() - 0.5) * 40,
+    });
+  }
+  const cloudGeo = new THREE.BufferGeometry();
+  cloudGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(60 * 3), 3));
+  const clouds = new THREE.Points(cloudGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 90, sizeAttenuation: true, map: cloudTex, transparent: true, opacity: 0.5, fog: false, depthWrite: false }));
+  clouds.frustumCulled = false;
+  scene.add(clouds); scene.userData.clouds = clouds; scene.userData.cloudOffsets = cloudOffsets;
   scene.userData.hemi = hemi;
 
   world = await buildWorld(scene, W.seed, onProgress, W.dim === 'flipped' ? { mirror: true, gen: W.genVersion } : { gen: W.genVersion });
@@ -451,6 +481,14 @@ function bindInput() {
     if (e.code === kb.friends) {
       if ($('game-screen').classList.contains('hidden')) return;
       S.setFriendsOpen?.(!document.body.classList.contains('friends-open'));
+      return;
+    }
+    // Minimap toggle (redo slice 10, default ON): fixed M key, checked
+    // after the friends bind so rebinding friends to M still wins.
+    if (e.code === 'KeyM') {
+      if ($('game-screen').classList.contains('hidden')) return;
+      minimapOn = !minimapOn;
+      $('minimap')?.classList.toggle('hidden', !minimapOn);
       return;
     }
   });
@@ -608,7 +646,7 @@ function renderHelp() {
   <p><b>WASD</b> move · <b>Double-tap W</b> sprint (hold W) · <b>${fmtKey(S.keybinds.sprint)}</b> sprint · <b>Hold ${fmtKey(S.keybinds.crouch)}</b> crouch · <b>Mouse</b> look · <b>Space</b> jump<br>
   <b>Right-click</b> (or <b>E</b>) interact · <b>Hold right-click</b> eat · <b>Hold left-click</b> to chop / mine / dig · <b>Left- or right-click</b> place in build mode · <b>B</b> or switch to a non-building item exits build mode<br>
   <b>1–7</b> hotbar · <b>8, 9, 0</b> permanent slots (car key, house key, phone) · <b>Scroll</b> switch slot<br>
-  <b>${fmtKey(S.keybinds.inventory)}</b> backpack · <b>${fmtKey(S.keybinds.build)}</b> build mode · <b>${fmtKey(S.keybinds.quickcraft)}</b> quick craft · <b>${fmtKey(S.keybinds.chat)}</b> chat · <b>${fmtKey(S.keybinds.friends)}</b> friends · <b>Esc</b> or <b>${fmtKey(S.keybinds.pause)}</b> menu · <b>${fmtKey(S.keybinds.help)}</b> this help</p>
+  <b>${fmtKey(S.keybinds.inventory)}</b> backpack · <b>${fmtKey(S.keybinds.build)}</b> build mode · <b>${fmtKey(S.keybinds.quickcraft)}</b> quick craft · <b>${fmtKey(S.keybinds.chat)}</b> chat · <b>${fmtKey(S.keybinds.friends)}</b> friends · <b>Esc</b> or <b>${fmtKey(S.keybinds.pause)}</b> menu · <b>${fmtKey(S.keybinds.help)}</b> this help · <b>M</b> minimap</p>
   <p>Start: chop trees with your wooden axe. Use the gold bench near spawn to craft walls, tools and machines. Place a vehicle machine, craft a car, and your car key appears in a permanent slot. Watch hunger — eat apples to stay full and regen health.</p>
   <p><b>Phone</b> (craft it with iron at a workbench): select it and <b>right-click</b> to open it. <b>Portal command center</b> (workbench: 4 iron + 4 wood): place it, use its keypad, and walk into the portal to reach The Flipped — a mirrored world of fire and darkness. There, the Darkened hunt you; beat one to earn the Shadow Sword, which poisons enemies. In The Flipped, your phone's <b>Portal Recall</b> calls a portal back to your arrival spot — or drags you home if you're far away.</p>
   <p><b>Armor</b> (workbench: Stone Armor from 6 stone, Iron Armor from 6 iron): drag a set onto the <b>Armor</b> slot in your inventory to wear it. Stone cuts damage by 25%, Iron by 50% — and a set wears out with every hit you take, so keep a spare.</p>`;
@@ -1038,6 +1076,8 @@ function hitDarkened(d) {
   const power = sel ? (ITEMS[sel.id]?.power ?? 0.5) : 0.5;
   triggerSwing();
   d.hp -= power;
+  // Damage number (redo slice 10): gold, at the Darkened's chest height.
+  spawnDmgNum(new THREE.Vector3(d.group.position.x, d.group.position.y + 2.2, d.group.position.z), power, 'enemy');
   // Feel (redo slice 3): hit sound, emissive hit-flash, small knockback.
   sfx('hit');
   d.flashUntil = now + 150;
@@ -1156,6 +1196,9 @@ function loop() {
   updateCrops(dt);
   updateDrops(dt);
   updateDebris(dt);
+  updateDmgNums();
+  updateCompass();
+  updateMinimap(dt);
   updateCarsVisual(dt);
   updateLidAnims();
   updateFlipped(dt);
@@ -1196,6 +1239,23 @@ function loop() {
   }
   const stars = scene.userData.stars;
   if (stars) stars.position.copy(P.pos);
+  // Clouds drift (redo slice 10): slow wind, wrap around the player.
+  // Dark-tinted in The Flipped, like smoke over the fire world.
+  const clouds = scene.userData.clouds, cloudOffsets = scene.userData.cloudOffsets;
+  if (clouds && cloudOffsets) {
+    clouds.position.copy(P.pos);
+    const pos = clouds.geometry.attributes.position;
+    for (let i = 0; i < cloudOffsets.length; i++) {
+      const o = cloudOffsets[i];
+      o.x += dt * 1.5;
+      if (o.x > 500) o.x = -500;
+      pos.setXYZ(i, o.x, o.y, o.z);
+    }
+    pos.needsUpdate = true;
+    const flipped = W?.dim === 'flipped';
+    clouds.material.color.set(flipped ? 0x4a3038 : 0xffffff);
+    clouds.material.opacity = flipped ? 0.4 : 0.5;
+  }
   if (world?.seaMat) world.seaMat.uniforms.uTime.value = clock.elapsedTime;
   renderer.render(scene, camera);
   renderPortalPreview();
@@ -1397,6 +1457,9 @@ function hurt(dmg, cause) {
   }
   P.hp -= dmg;
   updateHUD();
+  // Damage number (redo slice 10): red, screen-center — combat hits
+  // only (Darkened), never falls.
+  if (cause === 'Darkened') spawnDmgNum(null, dmg, 'player');
   // Feel (redo slice 3): hurt sound + red edge pulse.
   sfx('hurt');
   damageFlash();
@@ -1838,6 +1901,125 @@ function updateDebris(dt) {
     debrisMesh.setMatrixAt(i, debrisDummy.matrix);
   }
   if (dirty) debrisMesh.instanceMatrix.needsUpdate = true;
+}
+
+// ---------- Slice 10 HUD: damage numbers, compass, minimap ----------
+// Damage numbers: small floating combat numbers, capped at 12 so they
+// never spam. Screen-space only (captured at hit time, rising + fading
+// over 0.9s) — no per-frame projection cost.
+const dmgNums = [];
+function spawnDmgNum(worldPos, dmg, kind) {
+  const wrap = $('dmg-numbers'); if (!wrap) return;
+  if (dmgNums.length >= 12) { const old = dmgNums.shift(); old.el.remove(); }
+  const el = document.createElement('div');
+  el.className = 'dmg-num ' + kind;
+  el.textContent = Math.round(dmg);
+  let x = window.innerWidth / 2, y = window.innerHeight / 2;
+  if (worldPos) {
+    const v = worldPos.clone().project(camera);
+    x = (v.x * 0.5 + 0.5) * window.innerWidth;
+    y = (-v.y * 0.5 + 0.5) * window.innerHeight;
+  }
+  x += (Math.random() - 0.5) * 30; y += (Math.random() - 0.5) * 20;
+  el.style.left = x + 'px'; el.style.top = y + 'px';
+  wrap.appendChild(el);
+  dmgNums.push({ el, born: performance.now() });
+}
+function updateDmgNums() {
+  const now = performance.now();
+  for (let i = dmgNums.length - 1; i >= 0; i--) {
+    const d = dmgNums[i], age = (now - d.born) / 1000;
+    if (age >= 0.9) { d.el.remove(); dmgNums.splice(i, 1); continue; }
+    d.el.style.transform = `translate(-50%, -50%) translateY(${-age * 45}px)`;
+    d.el.style.opacity = age > 0.6 ? String(1 - (age - 0.6) / 0.3) : '1';
+  }
+}
+// Compass: slim top-center bar, 120° window, tape of 3×360° so it
+// scrolls without jumps. Heading from the camera yaw (car yaw +
+// free-look offset while driving). Spawn + portal markers ride the
+// tape; Darkened are NEVER marked — they stay scary.
+const COMPASS_PX = 320 / 120;
+let compassTapeBuilt = false, lastCompassText = '';
+function buildCompassTape() {
+  const tape = $('compass-tape'); if (!tape || compassTapeBuilt) return;
+  compassTapeBuilt = true;
+  const cardinals = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  let html = '';
+  for (let rep = 0; rep < 3; rep++) {
+    for (let deg = 0; deg < 360; deg += 15) {
+      const left = (rep * 360 + deg) * COMPASS_PX;
+      if (deg % 45 === 0) html += `<span class="ctick-label" style="left:${left}px">${cardinals[deg / 45]}</span>`;
+      else html += `<span class="ctick" style="left:${left}px"></span>`;
+    }
+  }
+  tape.innerHTML = html;
+}
+function updateCompass() {
+  if (!$('compass')) return;
+  buildCompassTape();
+  const hy = driving ? driving.yaw + driveLook : P.yaw;
+  const bearing = ((-hy * 180 / Math.PI) % 360 + 360) % 360;
+  $('compass-tape').style.transform = `translateX(${160 - (bearing + 360) * COMPASS_PX}px)`;
+  const names = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  const text = names[Math.round(bearing / 45) % 8] + ' · ' + Math.round(bearing) + '°';
+  if (text !== lastCompassText) {
+    lastCompassText = text;
+    const r = $('compass-readout'); if (r) r.textContent = text;
+  }
+  const place = (el, tx, tz) => {
+    if (!el) return;
+    const dx = tx - P.pos.x, dz = tz - P.pos.z;
+    const to = (Math.atan2(dx, -dz) * 180 / Math.PI + 360) % 360;
+    const rel = ((to - bearing + 540) % 360) - 180;
+    el.style.left = (160 + rel * COMPASS_PX) + 'px';
+  };
+  if (world?.spawn) place($('compass-spawn'), world.spawn.x, world.spawn.z);
+  if (portal) place($('compass-portal'), portal.x, portal.z);
+  else { const pm = $('compass-portal'); if (pm) pm.style.left = '-100px'; }
+}
+// Minimap: small north-up canvas, 140 units across, coarse 35×35
+// sampling (4px cells) at 4Hz — a few thousand height/biome lookups
+// a second, no per-frame cost. Player arrow, spawn + portal markers.
+// Darkened are NEVER marked. Toggle M, default ON, session-only.
+let minimapOn = true, minimapTimer = 0;
+const MINIMAP_COLORS = {
+  normal: { plains: '#5da24a', desert: '#e6cf92', tallforest: '#3a7a2e', snowy: '#f2f6fa', caved: '#8a857c', water: '#2f7fc4' },
+  flipped: { plains: '#a25db5', desert: '#19306d', tallforest: '#c585d1', snowy: '#0d0905', caved: '#757a83', water: '#d0803b' },
+};
+function updateMinimap(dt) {
+  minimapTimer += dt;
+  if (minimapTimer < 0.25) return;
+  minimapTimer = 0;
+  const cv = $('minimap'); if (!cv || !minimapOn || !W) return;
+  const ctx = cv.getContext('2d');
+  const pal = W.dim === 'flipped' ? MINIMAP_COLORS.flipped : MINIMAP_COLORS.normal;
+  const CELL = 4, N = 35;
+  for (let gy = 0; gy < N; gy++) {
+    for (let gx = 0; gx < N; gx++) {
+      const wx = P.pos.x + (gx - 17) * CELL, wz = P.pos.z + (gy - 17) * CELL;
+      const h = heightAt(mx(wx), wz, W.seed, W.genVersion);
+      const key = h < 0.3 ? 'water' : biomeAt(mx(wx), wz, W.seed, W.genVersion);
+      ctx.fillStyle = pal[key];
+      ctx.fillRect(gx * CELL, gy * CELL, CELL, CELL);
+    }
+  }
+  const mark = (tx, tz, color, diamond) => {
+    let dx = tx - P.pos.x, dz = tz - P.pos.z;
+    const len = Math.hypot(dx, dz);
+    if (len > 66) { dx = dx / len * 66; dz = dz / len * 66; }
+    const px = 70 + dx, py = 70 + dz;
+    ctx.fillStyle = color;
+    if (diamond) { ctx.save(); ctx.translate(px, py); ctx.rotate(Math.PI / 4); ctx.fillRect(-3.5, -3.5, 7, 7); ctx.restore(); }
+    else { ctx.beginPath(); ctx.arc(px, py, 3.5, 0, Math.PI * 2); ctx.fill(); }
+  };
+  if (world?.spawn) mark(world.spawn.x, world.spawn.z, '#46a758', false);
+  if (portal) mark(portal.x, portal.z, '#a855f7', true);
+  const hy = driving ? driving.yaw + driveLook : P.yaw;
+  const bearing = ((-hy * 180 / Math.PI) % 360 + 360) % 360;
+  ctx.save(); ctx.translate(70, 70); ctx.rotate(bearing * Math.PI / 180);
+  ctx.fillStyle = '#ffffff'; ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, -8); ctx.lineTo(5, 6); ctx.lineTo(0, 3); ctx.lineTo(-5, 6); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.restore();
 }
 
 // ---------- Targeting ----------
