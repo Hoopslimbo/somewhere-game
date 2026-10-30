@@ -175,7 +175,7 @@ window.startGame = async function (worldDef, onProgress) {
     // Fresh run state: re-entering a world (e.g. via pause → lobby →
     // Play) must not carry stale placed pieces, cars, crops, or drops.
     placed = []; cars = []; crops = []; drops = [];
-    darkened = []; portal = null;
+    darkened = []; closePortal();
     $('phone-panel').classList.add('hidden');
     driving = null; buildMode = false; chatOpen = false; pauseOpen = false;
     $('pause-menu').classList.add('hidden');
@@ -621,7 +621,7 @@ async function backToLobby() {
   $('pause-settings').classList.add('hidden');
   if (RAF) { cancelAnimationFrame(RAF); RAF = null; }
   started = false;
-  darkened = []; portal = null;
+  darkened = []; closePortal();
   // Save-before-leave ordering unchanged: the save lands before the
   // game screen hides and before the lobby shows.
   saveGame();
@@ -693,12 +693,17 @@ function openPortal(targetDim, machine) {
 function spawnPortal(x, z, targetDim, machine, facing) {
   closePortal();
   const group = new THREE.Group();
-  const ringM = new THREE.MeshStandardMaterial({ color: 0x7a5cff, emissive: 0x7a5cff, emissiveIntensity: 1.6, roughness: 0.4 });
+  const ringM = new THREE.MeshStandardMaterial({ color: 0x7a5cff, emissive: 0x7a5cff, emissiveIntensity: 1.6, roughness: 0.4, transparent: true, opacity: 0 });
   const ring = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.12, 10, 32), ringM);
   ring.position.y = 1.6; group.add(ring);
-  const disc = new THREE.Mesh(new THREE.CircleGeometry(1.35, 32),
-    new THREE.MeshStandardMaterial({ map: swirlTex(), transparent: true, opacity: 0.55, emissive: 0x7a5cff, emissiveIntensity: 0.8, side: THREE.DoubleSide }));
+  const discM = new THREE.MeshStandardMaterial({ map: swirlTex(), transparent: true, opacity: 0, emissive: 0x7a5cff, emissiveIntensity: 0.8, side: THREE.DoubleSide });
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(1.35, 32), discM);
   disc.position.y = 1.6; group.add(disc);
+  // Appear animation (2026-10-30): the portal grows in from the
+  // platform over ~0.9s (scale + fade + a quarter-turn of the ring)
+  // instead of popping into existence. It finishes before the 1.2s
+  // arm, so by the time you can walk in it stands fully formed.
+  group.scale.setScalar(0.25);
   group.position.set(x, groundY(x, z), z);
   // FIXED 2026-10-29: the portal used to turn to face whoever opened
   // it, so it looked sideways. It now always faces straight out of
@@ -712,10 +717,112 @@ function spawnPortal(x, z, targetDim, machine, facing) {
   // did nothing). Near-passes still never trigger, because travel
   // needs d < 1.0, the disc center — the old auto-teleport bug fired
   // at d < 2.5, merely passing nearby.
-  portal = { group, x, z, targetDim, machine, armedAt: performance.now() + 1200 };
+  portal = { group, ring, ringM, disc, discM, x, z, targetDim, machine, armedAt: performance.now() + 1200, bornAt: performance.now() };
+  startPortalPreview(portal);
+}
+function updatePortalAppear() {
+  if (!portal || portal.appearDone) return;
+  const ap = Math.min(1, (performance.now() - portal.bornAt) / 900);
+  const e = 1 - Math.pow(1 - ap, 3); // ease-out cubic
+  portal.group.scale.setScalar(0.25 + 0.75 * e);
+  portal.ringM.opacity = e;
+  portal.discM.opacity = 0.55 * e;
+  portal.ring.rotation.z = (1 - e) * Math.PI * 0.5;
+  if (ap >= 1) { portal.appearDone = true; portal.ringM.opacity = 1; portal.discM.opacity = 0.55; portal.ring.rotation.z = 0; }
 }
 function closePortal() {
-  if (portal) { scene.remove(portal.group); portal = null; }
+  if (!portal) return;
+  scene.remove(portal.group);
+  if (portal.previewScene) disposePreviewScene(portal.previewScene);
+  portal = null;
+}
+// Portal window (2026-10-30): when a portal opens, a light build of
+// the TARGET dimension is built in the background (chunked, like the
+// lobby panorama) and rendered into the portal disc — a live window
+// of what the dimension looks like. The swirl shows until the window
+// is ready; walking in still does the normal loading + travel. The
+// window shows the landscape (terrain, sky, red sun) — mobs like the
+// Darkened live in the real world, not in the preview build.
+let previewRT = null;
+async function startPortalPreview(p) {
+  const targetDim = p.targetDim;
+  const flipped = targetDim === 'flipped';
+  const pvScene = new THREE.Scene();
+  pvScene.fog = new THREE.Fog(flipped ? 0x0e1626 : 0xcfe4f5, 120, 340);
+  const hemi = new THREE.HemisphereLight(0xcfe8ff, 0x3d5a34, flipped ? 0.35 : 0.95);
+  pvScene.add(hemi);
+  const sun = new THREE.DirectionalLight(flipped ? 0xff6a1a : 0xfff2cc, flipped ? 0.25 : 1.55);
+  sun.position.set(40, 70, 20);
+  pvScene.add(sun); pvScene.add(sun.target);
+  const sky = makeSkyDome(700);
+  sky.material.uniforms.topColor.value.set(flipped ? 0x050914 : 0x3d7ac8);
+  sky.material.uniforms.horizonColor.value.set(flipped ? 0x0e1626 : 0xcfe4f5);
+  pvScene.add(sky);
+  let redSun = null;
+  if (flipped) {
+    redSun = new THREE.Group();
+    const halo = new THREE.Mesh(new THREE.CircleGeometry(90, 32), new THREE.MeshBasicMaterial({ color: 0xff3300, transparent: true, opacity: 0.25, fog: false }));
+    halo.position.z = -1;
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(45, 32), new THREE.MeshBasicMaterial({ color: 0xff1a1a, fog: false }));
+    redSun.add(halo); redSun.add(disc);
+    pvScene.add(redSun);
+  }
+  // Arrival spot, same rule as the walk-in: into the Flipped you land
+  // where you stand; home you land at the machine + 2z. Ground height
+  // is looked up in the TARGET dimension's coordinates (mirrored when
+  // flipped, since the preview terrain is built mirrored too).
+  const ax = flipped ? P.pos.x : (W.home?.x ?? P.pos.x);
+  const az = flipped ? P.pos.z : ((W.home?.z ?? P.pos.z) + 2);
+  const gy = heightAt(flipped ? -ax : ax, az, W.seed);
+  const cam = new THREE.PerspectiveCamera(62, 1, 0.1, 2000);
+  cam.rotation.order = 'YXZ';
+  const yawBase = p.group.rotation.y + Math.PI;
+  try {
+    await buildWorld(pvScene, W.seed, null, { light: true, mirror: flipped });
+  } catch { disposePreviewScene(pvScene); return; }
+  // A newer portal (or travel, or quit) replaced this one mid-build:
+  // drop the orphaned preview instead of attaching it to a dead portal.
+  if (portal !== p) { disposePreviewScene(pvScene); return; }
+  p.previewScene = pvScene; p.previewSky = sky; p.previewRedSun = redSun;
+  p.previewCam = cam; p.previewCamPos = { x: ax, y: gy + 2.0, z: az }; p.previewYawBase = yawBase;
+  p.previewReady = true;
+  // Swap the swirl for the live window (unlit: the preview is already
+  // lit for its dimension, and a window should read true, not glow).
+  if (!previewRT) previewRT = new THREE.WebGLRenderTarget(256, 256);
+  p.disc.material = new THREE.MeshBasicMaterial({ map: previewRT.texture, side: THREE.DoubleSide });
+}
+function disposePreviewScene(pvScene) {
+  // Everything buildWorld creates per build is fresh (terrain, buckets,
+  // bench, sky) — safe to dispose. Texture maps are NOT disposed: they
+  // come from the shared textures.js cache the main world also uses.
+  pvScene.traverse((o) => {
+    if (!o.isMesh) return;
+    if (o.isInstancedMesh) o.dispose();
+    if (o.geometry) o.geometry.dispose();
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const m of mats) if (m) m.dispose();
+  });
+}
+let lastPreviewRender = 0;
+function renderPortalPreview() {
+  if (!portal?.previewReady || !previewRT) return;
+  const now = performance.now();
+  if (now - lastPreviewRender < 100) return; // ~10fps window is plenty
+  lastPreviewRender = now;
+  const cam = portal.previewCam, pos = portal.previewCamPos;
+  // Gentle look-around: the window slowly pans ±40° so it shows off
+  // the dimension instead of one frozen hillside.
+  const yaw = portal.previewYawBase + Math.sin(now / 1000 * 0.15) * 0.7;
+  cam.position.set(pos.x, pos.y, pos.z);
+  cam.rotation.set(-0.05, yaw, 0);
+  if (portal.previewSky) portal.previewSky.position.set(pos.x, 0, pos.z);
+  if (portal.previewRedSun) {
+    portal.previewRedSun.position.set(pos.x + 150, pos.y + 280, pos.z - 400);
+    portal.previewRedSun.lookAt(pos.x, pos.y, pos.z);
+  }
+  renderer.setRenderTarget(previewRT);
+  renderer.render(portal.previewScene, cam);
+  renderer.setRenderTarget(null);
 }
 // Dimension travel reuses the proven Play path: save, cancel the loop,
 // rebuild the world (mirrored for The Flipped), then land the player.
@@ -725,7 +832,7 @@ async function switchDimension(dim, arrivePos) {
   if (!W || W.dim === dim) return;
   saveGame();
   if (RAF) { cancelAnimationFrame(RAF); RAF = null; }
-  darkened = []; portal = null;
+  darkened = []; closePortal();
   $('phone-panel').classList.add('hidden');
   W.dim = dim;
   $('loading-screen').classList.remove('hidden');
@@ -894,6 +1001,7 @@ function updateFlipped(dt) {
     }
     updateDarkened(dt);
   }
+  if (portal) updatePortalAppear();
   if (portal && !P.dead) {
     const d = Math.hypot(P.pos.x - portal.x, P.pos.z - portal.z);
     // Walk-in check (armed-gated): travel when the player is in the
@@ -957,6 +1065,7 @@ function loop() {
     }
   }
   renderer.render(scene, camera);
+  renderPortalPreview();
   saveTimer += dt;
   if (saveTimer > 10) { saveTimer = 0; saveGame(); }
 }
