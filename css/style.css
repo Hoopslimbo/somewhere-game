@@ -1,8 +1,16 @@
 /* ==================================================================
-   SOMEWHERE — clean design system
-   Soft rounded panels, gentle soft shadows, clean type, restrained
-   sky-blue accent. Pure visuals: no HTML/JS behaviour, label,
-   slot count, or mechanic changes.
+   SOMEWHERE — design system (redo slice 7 notes)
+   Layers, in order: base rules, then scoped clean overrides for
+   auth / lobby / game, then fix-batch-2 rules. The fix-batch-2
+   rules deliberately keep their higher-specificity selectors: folding
+   them into the base rules would change results (e.g. the 900px media
+   rule would beat a merged .lobby-bottom margin), so they stay
+   separate. Only provably-identical merges were done: same-selector
+   blocks concatenated (.header-user, .friends-panel) and the unused
+   --shadow variable removed. The base chunky rules are NOT dead
+   weight — body-level UI (friends panel buttons/inputs/headings)
+   still uses them, and several base rules contribute properties the
+   scoped overrides never touch (e.g. #char-canvas's drop-shadow).
    ================================================================== */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -11,7 +19,6 @@
   --accent: #00b2ff; --green: #57e32e;
   --sky: #8ec9ff; --sky-soft: rgba(142,201,255,.18); --sky-line: rgba(142,201,255,.55);
   --red: #ff3b47; --purple: #8b5cf6; --orange: #ff7a1a;
-  --shadow: 0 18px 0 rgba(0,0,0,.35);
   --ease: .15s ease;
   --cut: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
   --cut-sm: polygon(9px 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%, 0 9px);
@@ -107,9 +114,8 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
 .lobby-tab { padding: 9px 20px; border-radius: 999px; border: 1px solid transparent; background: transparent; color: rgba(255,255,255,.75); font-weight: 600; font-size: 15px; transition: background var(--ease), color var(--ease), box-shadow var(--ease); }
 .lobby-tab:hover { background: rgba(255,255,255,.10); color: #fff; }
 .lobby-tab.active { background: #fff; color: #0b1226; box-shadow: 0 4px 14px rgba(0,0,0,.35); }
-.header-user { margin-left: auto; }
+.header-user { margin-left: auto; display: flex; align-items: center; gap: 10px; font-weight: 600; }
 .badge { background: var(--red); color: #fff; border-radius: 999px; padding: 2px 8px; font-size: 11px; font-weight: 700; margin-left: 5px; }
-.header-user { display: flex; align-items: center; gap: 10px; font-weight: 600; }
 .mini-pfp { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; background: #223; border: 2px solid rgba(255,255,255,.25); }
 .lobby-center { display: flex; flex-direction: column; align-items: center; justify-self: center; }
 .nameplate { display: flex; align-items: center; gap: 10px; background: rgba(8,12,26,.55); border: 1px solid rgba(255,255,255,.12); border-radius: 999px; padding: 9px 20px; font-weight: 600; font-size: 17px; backdrop-filter: blur(8px); }
@@ -118,7 +124,10 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
 .party-row { display: flex; gap: 8px; margin: 4px 0 10px; }
 .party-chip { background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12); border-radius: 999px; padding: 6px 14px; font-size: 13px; font-weight: 600; }
 .selected-world { margin-top: 10px; color: #a8d4ff; font-size: 14px; font-weight: 600; }
-.friends-panel { background: rgba(10,15,32,.72); border: 1px solid rgba(255,255,255,.10); border-radius: 20px; padding: 20px; z-index: 5; max-height: 60vh; overflow: auto; backdrop-filter: blur(16px); box-shadow: 0 16px 40px rgba(0,0,0,.35); }
+.friends-panel { background: rgba(10,15,32,.72); border: 1px solid rgba(255,255,255,.10); border-radius: 20px; padding: 20px; z-index: 5; max-height: 60vh; overflow: auto; backdrop-filter: blur(16px); box-shadow: 0 16px 40px rgba(0,0,0,.35);
+  /* Merged fix-batch-2 slide-in declarations (same selector, same
+     order, all lines kept — cascade-identical to the two blocks). */
+  position: fixed; right: 0; top: 0; bottom: 0; width: 320px; max-width: 86vw; max-height: none; border-radius: 20px 0 0 20px; z-index: 40; transform: translateX(105%); transition: transform .32s ease; overflow-y: auto; }
 .friends-panel h3 { margin-bottom: 12px; }
 .friend-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid rgba(255,255,255,.07); font-size: 14px; font-weight: 500; }
 .friend-row .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green); flex: none; }
@@ -241,6 +250,11 @@ body.low-health .vignette { animation: lowpulse 1.2s ease-in-out infinite; }
 .fill.health { background: repeating-linear-gradient(45deg, rgba(255,255,255,.28) 0 7px, transparent 7px 14px), linear-gradient(90deg, #ff3b47, #ff7a5c); }
 .fill.hunger { background: repeating-linear-gradient(45deg, rgba(255,255,255,.28) 0 7px, transparent 7px 14px), linear-gradient(90deg, #ff7a5c, #ff8a5c); }
 .fill.fuel { background: repeating-linear-gradient(45deg, rgba(255,255,255,.28) 0 7px, transparent 7px 14px), linear-gradient(90deg, #00c2ff, var(--accent)); }
+/* Armor HUD chip (redo slice 7): icon + durability bar under the vitals.
+   The game-scoped line beats #game-screen .vitals-bl .bar's width. */
+#armor-chip .bar { width: 150px; height: 12px; }
+#game-screen #armor-chip .bar { width: 150px; height: 12px; }
+.fill.armor { background: linear-gradient(90deg, #8a8d92, #c8ccd2); }
 .hud-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; font-weight: 800; text-shadow: 2px 2px 0 #000; }
 .money { color: #fff; font-family: var(--display); font-size: 18px; letter-spacing: .5px; }
 .chat-box { position: absolute; left: 18px; bottom: 212px; width: 380px; max-width: 60vw; pointer-events: none; }
@@ -422,8 +436,8 @@ body.low-health .vignette { animation: lowpulse 1.2s ease-in-out infinite; }
 #lobby-screen #char-canvas { width: 312px; height: 390px; }
 /* The panel lives at body level (not inside the lobby screen) so it can
    slide in over the game screen too — F opens it in game as well as in
-   the lobby. Visibility is driven by body.friends-open. */
-.friends-panel { position: fixed; right: 0; top: 0; bottom: 0; width: 320px; max-width: 86vw; max-height: none; border-radius: 20px 0 0 20px; z-index: 40; transform: translateX(105%); transition: transform .32s ease; overflow-y: auto; }
+   the lobby. Visibility is driven by body.friends-open. (Its slide-in
+   declarations now live in the merged .friends-panel block above.) */
 /* Circular friends button: lives BELOW the header bar (not inside it),
    top right, and sits above the friends panel (z 45 > 40) so it stays
    visible and clickable whether the panel is open or closed. */

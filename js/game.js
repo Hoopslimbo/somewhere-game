@@ -15,6 +15,8 @@ let world, player, keys = {}, locked = false, started = false;
 // Feel (redo slice 3): walk-bob phase/amplitude, footstep distance
 // accumulator, landing-dip amount, damage-flash timeout.
 let bobPhase = 0, bobAmp = 0, stepAcc = 0, landDip = 0, flashTimer = null;
+// Armor chip icon cache (redo slice 7): avoids rewriting innerHTML per frame.
+let armorChipIconId = null;
 let W = null; // world def
 let time = 600; // seconds into day cycle (30 min = 1800s); start 08:00
 let placed = [], cars = [], crops = [], drops = [];
@@ -3554,6 +3556,24 @@ function updateHUDDynamic() {
   if (driving) $('fuel-fill').style.width = Math.max(0, driving.fuel) + '%';
   // Low-health warning (redo slice 3): red pulsing vignette.
   document.body.classList.toggle('low-health', P.hp <= 25 && !P.dead);
+  // Armor HUD chip (redo slice 7): icon + durability near the vitals.
+  // Icon innerHTML only rewrites when the worn set changes.
+  const armorChip = $('armor-chip');
+  if (armorChip) {
+    if (P.armor) {
+      armorChip.classList.remove('hidden');
+      if (armorChipIconId !== P.armor.id) {
+        armorChipIconId = P.armor.id;
+        $('armor-chip-icon').innerHTML = itemIcon(P.armor.id);
+      }
+      const adef = ITEMS[P.armor.id];
+      $('armor-fill').style.width = (adef?.maxDur ? P.armor.dur / adef.maxDur * 100 : 0) + '%';
+      $('armor-num').textContent = P.armor.dur;
+    } else {
+      armorChip.classList.add('hidden');
+      armorChipIconId = null;
+    }
+  }
 }
 
 // ---------- Chat / eat ----------
