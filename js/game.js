@@ -30,7 +30,7 @@ let invOpened = null, buildOpened = null, helpOpened = null, craftOpened = null,
 let targetRing = null;
 // ---------- The Flipped + phone (dimension system) ----------
 let darkened = []; // active Darkened mobs (Flipped only)
-let portal = null; // open portal {group, x, z, targetDim, machine, armedAt, prevD}
+let portal = null; // open portal {group, x, z, targetDim, machine, armedAt}
 let travelFailed = false; // set if a dimension rebuild throws: saves stop so the pre-switch disk save survives until a refresh
 let phoneOpenedAt = 0; // guards the right-click that opens the phone menu from closing it
 let darkenedTimer = 90; // seconds until the next Darkened spawn check (Flipped only)
@@ -672,8 +672,9 @@ function openPortal(targetDim, machine) {
   // REDESIGNED 2026-10-29: the portal opens INSIDE the claw frame at
   // the machine's center (platform origin), not 2 units out from a
   // cabinet. Walk onto the platform and into the arch to travel.
-  // Walk-in crossing logic (prevD > 1.4 into center < 1.0, armed gate)
-  // is unchanged — it now measures from the frame center.
+  // Walk-in rule: after the 1.2s arm, stepping into the center
+  // (d < 1.0) travels — no need to step out first, since opening
+  // is deliberate; near-passes (d >= 1.0) never trigger.
   spawnPortal(machine.x, machine.z, targetDim, machine);
   toast('Portal open — walk into it.');
 }
@@ -693,11 +694,13 @@ function spawnPortal(x, z, targetDim, machine, facing) {
   // reuses the facing of the portal you came through.
   group.rotation.y = (typeof facing === 'number') ? facing : (machine && typeof machine.rotY === 'number' ? machine.rotY : 0);
   scene.add(group);
-  // armedAt + prevD: walking in must be a real crossing, not standing
-  // still where the portal happened to open — and not merely walking
-  // near an open portal (the reported auto-teleport bug: the old
-  // d<2.5 + moved>1 check fired for anyone passing within 2.5 units).
-  portal = { group, x, z, targetDim, machine, armedAt: performance.now() + 1200, prevD: Math.hypot(P.pos.x - x, P.pos.z - z) };
+  // armedAt: after a 1.2s arm, stepping into the center travels.
+  // No exit-first requirement (2026-10-29: it trapped players who
+  // opened the portal while standing close — walking straight in
+  // did nothing). Near-passes still never trigger, because travel
+  // needs d < 1.0, the disc center — the old auto-teleport bug fired
+  // at d < 2.5, merely passing nearby.
+  portal = { group, x, z, targetDim, machine, armedAt: performance.now() + 1200 };
 }
 function closePortal() {
   if (portal) { scene.remove(portal.group); portal = null; }
@@ -857,11 +860,12 @@ function updateFlipped(dt) {
   }
   if (portal && !P.dead) {
     const d = Math.hypot(P.pos.x - portal.x, P.pos.z - portal.z);
-    // Crossing check (armed-gated): travel only when the player steps
-    // from OUTSIDE the ring (prevD > 1.4) INTO the disc center (d < 1.0).
-    // Walking near an open portal, or standing in its neighborhood,
-    // never triggers travel on its own.
-    if (performance.now() > portal.armedAt && portal.prevD > 1.4 && d < 1.0) {
+    // Walk-in check (armed-gated): travel when the player is in the
+    // disc center (d < 1.0) after the arm. Opening is deliberate, so
+    // no exit-first step is required — standing close when you open
+    // it and walking in now works. Walking NEAR an open portal
+    // (d >= 1.0) never triggers travel on its own.
+    if (performance.now() > portal.armedAt && d < 1.0) {
       const targetDim = portal.targetDim;
       if (targetDim === 'flipped') {
         W.arrival = { x: portal.x, z: portal.z };
@@ -875,9 +879,6 @@ function updateFlipped(dt) {
       W.lastPortalFacing = portal.group.rotation.y;
       switchDimension(targetDim, arrive);
     }
-    // Track the crossing every frame (even while arming), guarded in
-    // case travel just cleared the portal.
-    if (portal) portal.prevD = d;
   }
 }
 
