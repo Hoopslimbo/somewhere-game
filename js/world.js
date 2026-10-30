@@ -779,6 +779,28 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     groundStones.push({ mesh: st, x: mx(x), z, h });
     if ((i + 1) % 200 === 0) await yieldToBrowser();
   }
+  // Top-up (Liam 2026-10-29: keep all 240 stones, just spread out):
+  // water skips in the main loop land fewer than 240, so fill the gap
+  // from a SEPARATE rand stream. Drawing the top-up from the main rand
+  // would shift every rand call after this loop — and loot-chest save
+  // states are matched back by exact x/z, so chests in existing worlds
+  // would stop matching their saved states. The separate stream leaves
+  // the main stream (and everything built after it) untouched.
+  if (!light) {
+    const randFill = mulberry(seed * 104729 + 17);
+    let fillAttempts = 0;
+    while (groundStones.length < 240 && fillAttempts < 2400) {
+      fillAttempts++;
+      const x = (randFill() - 0.5) * (SIZE - 20), z = (randFill() - 0.5) * (SIZE - 20);
+      const h = heightAt(x, z, seed);
+      if (h < 0.8) continue;
+      const s = 0.20 + randFill() * 0.16;
+      const st = new THREE.Mesh(jitteredRockGeo(s, randFill), pick(MATS.stone, randFill));
+      st.position.set(mx(x), h + 0.15, z); st.castShadow = true; scene.add(st);
+      groundStones.push({ mesh: st, x: mx(x), z, h });
+      if (fillAttempts % 200 === 0) await yieldToBrowser();
+    }
+  }
   await yieldToBrowser();
   // Loot chests (REDESIGNED 2026-10-28, same look as the placed
   // storage chest): deep-wood planked body with seam grooves, an
