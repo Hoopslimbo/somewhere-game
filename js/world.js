@@ -208,25 +208,25 @@ MATS.gold.map = goldLightTex();
 MATS.wood.forEach((m) => { m.map = woodLightTex(); });
 
 function groundTexture() {
-  // Texture redo (2026-10-29): the grid-with-color-splashed look came
-  // from hue living ONLY in per-vertex colors (~1.9 units apart) over a
-  // deliberately neutral map. Vertices cannot carry sub-vertex detail,
-  // so the fix is map detail, not more vertices: two-scale detail in
-  // a light neutral base (vertex colors still drive the biome hue) —
-  // dense fine speckle/grain for close-up ground, soft irregular
-  // blotches with no straight tiling edges, at a much higher repeat
-  // (tile ~9.7 units instead of ~19) plus anisotropy 8 so the grain
-  // survives glancing angles. The 979-segment mesh is untouched.
+  // Texture redo (2026-10-29) made colors LESS vibrant on Liam's screen:
+  // 9000 dense gray speckles at double the old tiling (repeat 192) laid
+  // a gray veil over the vertex colors. Vibrancy fix (2026-10-29): a
+  // near-white base with much lighter, sparser speckle, and a coarser
+  // repeat (tile ~14.5 units) so the map adds texture without graying
+  // the biome hues — vertex colors still drive the hue. Anisotropy 8
+  // kept so the grain survives glancing angles. The 979-segment mesh
+  // is untouched. NOTE: the diamond grid Liam sees is NOT this map —
+  // it is the per-vertex jitter below (see the terrain-colors loop).
   const cv = document.createElement('canvas');
   cv.width = cv.height = 512;
   const ctx = cv.getContext('2d');
-  ctx.fillStyle = '#d8d8d8'; ctx.fillRect(0, 0, 512, 512);
+  ctx.fillStyle = '#f2f2f2'; ctx.fillRect(0, 0, 512, 512);
   // Large soft blotches: irregular, low-contrast, no straight edges.
   for (let i = 0; i < 130; i++) {
     const x = Math.random() * 512, y = Math.random() * 512, r = 55 + Math.random() * 85;
     const light = Math.random() < 0.5;
     const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
-    grad.addColorStop(0, light ? 'rgba(255,255,255,0.07)' : 'rgba(70,70,70,0.07)');
+    grad.addColorStop(0, light ? 'rgba(255,255,255,0.05)' : 'rgba(70,70,70,0.05)');
     grad.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = grad;
     ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
@@ -236,26 +236,26 @@ function groundTexture() {
     const x = Math.random() * 512, y = Math.random() * 512, r = 12 + Math.random() * 48;
     const light = Math.random() < 0.5;
     const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
-    grad.addColorStop(0, light ? 'rgba(255,255,255,0.12)' : 'rgba(60,60,60,0.12)');
+    grad.addColorStop(0, light ? 'rgba(255,255,255,0.08)' : 'rgba(60,60,60,0.08)');
     grad.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = grad;
     ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
   }
-  // Dense fine speckle/grain: the close-up detail the old map lacked.
-  for (let i = 0; i < 9000; i++) {
-    const g = 140 + Math.floor(Math.random() * 100);
-    ctx.fillStyle = `rgba(${g},${g},${g},0.22)`;
+  // Light sparse speckle: close-up detail without a gray veil.
+  for (let i = 0; i < 4000; i++) {
+    const g = 200 + Math.floor(Math.random() * 50);
+    ctx.fillStyle = `rgba(${g},${g},${g},0.15)`;
     ctx.beginPath(); ctx.arc(Math.random() * 512, Math.random() * 512, 0.8 + Math.random() * 1.4, 0, Math.PI * 2); ctx.fill();
   }
   // Sparse tiny pebble dots for close-up richness.
-  for (let i = 0; i < 1200; i++) {
-    const g = 90 + Math.floor(Math.random() * 90);
-    ctx.fillStyle = `rgba(${g},${g},${g},0.25)`;
+  for (let i = 0; i < 500; i++) {
+    const g = 170 + Math.floor(Math.random() * 60);
+    ctx.fillStyle = `rgba(${g},${g},${g},0.18)`;
     ctx.fillRect(Math.random() * 512, Math.random() * 512, 1.4, 1.4);
   }
   const tex = new THREE.CanvasTexture(cv);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(192, 192); // tile ~9.7 world units on the 1862 island
+  tex.repeat.set(128, 128); // tile ~14.5 world units on the 1862 island
   tex.anisotropy = 8;
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
@@ -644,9 +644,13 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     if (slope > 0.45 && h > 1.3) col.lerp(tmp.set(0x7a756e), Math.min(0.5, (slope - 0.45) * 1.2)); // cliffs shed snow
     // Smooth shading detail: the old per-integer-cell hash jitter changed
     // abruptly between neighbouring vertices and read as a blocky grid.
-    // A low-frequency noise jitter varies smoothly instead, so terrain
-    // shades blend instead of stepping cell to cell.
-    const j = (fbm(x * 0.35, z * 0.35, seed + 51) - 0.5) * 0.06;
+    // The 2026-10-29 redo kept that grid alive a different way: its
+    // fbm(x*0.35) jitter still changes almost randomly across 1.9-unit
+    // vertices, so every triangle shades slightly differently and the
+    // triangle edges read as a diamond grid on Liam's screen. A truly
+    // low-frequency jitter (wavelength ~20 units) varies smoothly
+    // instead, so terrain shades blend instead of stepping cell to cell.
+    const j = (fbm(x * 0.05, z * 0.05, seed + 51) - 0.5) * 0.06;
     colors[i * 3] = Math.min(1, Math.max(0, col.r + j));
     colors[i * 3 + 1] = Math.min(1, Math.max(0, col.g + j));
     colors[i * 3 + 2] = Math.min(1, Math.max(0, col.b + j));
@@ -739,6 +743,10 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
   // geometry would erase. Its rand() cost is a constant 60 calls/rock
   // (verified in node), so instancing them later would be RNG-safe
   // if that visual trade-off is ever accepted.
+  // Shared iron-ore nugget geometry/material (one of each per build;
+  // nuggets themselves are cheap child meshes, no per-nugget geometry).
+  const oreGeo = new THREE.BoxGeometry(1, 1, 1);
+  const oreMat = new THREE.MeshStandardMaterial({ color: 0xc9ced6, metalness: 0.9, roughness: 0.35 });
   reportProgress(onProgress, 'Rocks', 0.70);
   for (let i = 0; i < ROCK_N; i++) {
     if (i > 0 && i % 200 === 0) {
@@ -756,9 +764,28 @@ export async function buildWorld(scene, seed, onProgress, opts = {}) {
     rock.position.set(mx(x), h + s * 0.4, z); rock.castShadow = true;
     rock.rotation.set(rand() * 0.6, rand() * 3, rand() * 0.6);
     scene.add(rock);
-    if (iron) {
-      const fleck = new THREE.Mesh(new THREE.BoxGeometry(s * 0.5, s * 0.3, s * 0.2), MATS.rust);
-      fleck.position.set(mx(x), h + s * 0.9, z + s * 0.4); scene.add(fleck);
+    // Visible iron ore (Liam 2026-10-29: iron rocks must read as iron).
+    // The old rust fleck was a bug twice over: it sat buried INSIDE the
+    // rock (rock surface reaches ~1.175s, fleck spanned 0.35–0.65s above
+    // center), so it never showed — and it was an orphan scene mesh, so
+    // mineRock (which removes only the rock mesh) left it floating after
+    // mining. Replaced by 3 bright metallic nuggets stuck OUT of the
+    // rock as children of the rock mesh: they rotate with the rock, sit
+    // proud of the surface from any side, and vanish with the rock when
+    // it breaks. Directions/rotations are fixed per nugget (rock rotation
+    // still varies them per rock) so NO rand() is consumed here — the
+    // main rand stream, and therefore ground stones + chests after this
+    // loop, stays exactly where it was. Skipped in light (panorama) mode.
+    if (iron && !light) {
+      const dirs = [[1, 0.45, 0.25], [-0.75, 0.55, 0.6], [0.15, 0.35, -1]];
+      for (let k = 0; k < dirs.length; k++) {
+        const d = dirs[k], dl = Math.hypot(d[0], d[1], d[2]);
+        const nug = new THREE.Mesh(oreGeo, oreMat);
+        nug.position.set(d[0] / dl * s * 1.1, d[1] / dl * s * 1.1, d[2] / dl * s * 1.1);
+        nug.scale.set(s * 0.42, s * 0.3, s * 0.3);
+        nug.rotation.set(0.4 * (k + 1), 0.9 * (k + 1), 0.2 * (k + 1));
+        rock.add(nug);
+      }
     }
     rocks.push({ mesh: rock, x: mx(x), z, h, hp: iron ? 4 : 3, iron, radius: s });
   }

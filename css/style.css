@@ -78,7 +78,6 @@ input[type=range], input[type=checkbox] { accent-color: var(--sky); }
 #loading-screen { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: #0a0e1e; z-index: 150; }
 .loading-card { display: flex; flex-direction: column; align-items: center; gap: 18px; text-align: center; }
 .loading-card h1 { font-size: 40px; font-weight: 800; letter-spacing: 0; font-family: inherit; font-style: normal; text-transform: none; text-shadow: none; }
-.loading-logo { width: 96px; height: 96px; object-fit: contain; }
 .auth-wordmark { width: min(340px, 86%); margin: 0 auto; object-fit: contain; }
 .loading-wordmark { width: min(340px, 80vw); object-fit: contain; }
 .loading-spinner { width: 44px; height: 44px; border-radius: 50%; border: 4px solid rgba(255,255,255,.2); border-top-color: #fff; animation: loading-spin 0.9s linear infinite; }
@@ -448,9 +447,10 @@ body.friends-open .friends-panel { transform: translateX(0); }
    fully transparent (no background, no blur, no shadow) and the dark
    panel background lives only on the content panel below the handle.
    Closed, only the trapezoid shows; open, the white handle sits
-   flush on the dark content panel below it — zero gap, no strip. */
+   8px above the dark content panel — small gap, handle never
+   touches the panel (Liam 2026-10-29: no large gap). */
 #lobby-screen:not(.menu-open).worlds-open .lobby-bottom { transform: translateY(0); overflow-y: auto; background: transparent; backdrop-filter: none; box-shadow: none; }
-#lobby-screen:not(.menu-open) #panel-play { background: rgba(10,15,32,.96); border-radius: 20px; padding: 22px; min-height: calc(100% - 40px); box-sizing: border-box; }
+#lobby-screen:not(.menu-open) #panel-play { background: rgba(10,15,32,.96); border-radius: 20px; padding: 22px; margin-top: 8px; min-height: calc(100% - 48px); box-sizing: border-box; }
 /* Worlds flash guard: when leaving a menu tab, the sheet must snap
    below the viewport instantly — never animate through it. JS adds
    this class around the menu-open toggle only. */
