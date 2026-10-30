@@ -806,8 +806,20 @@ function killDarkened(d) {
   dropItem('shadow_sword', 1, d.group.position.x, d.group.position.z);
   chatMsg('System', 'The Darkened dropped a Shadow Sword! Right-click it to pick it up.', true);
 }
+// Attack cooldowns (2026-10-30): swords are the dedicated weapons, so
+// they swing slower — 1s between hits; anything else used as a weapon
+// recovers in 0.5s. Clicks during the cooldown do nothing (no swing,
+// no damage, no wear). Mining is untouched — hold ticks keep their
+// own 420ms cadence.
+let lastAttackAt = 0;
+function attackCooldownMs(sel) {
+  return sel && ITEMS[sel.id]?.tool === 'sword' ? 1000 : 500;
+}
 function hitDarkened(d) {
   const sel = selectedItem();
+  const now = performance.now();
+  if (now - lastAttackAt < attackCooldownMs(sel)) return;
+  lastAttackAt = now;
   const power = sel ? (ITEMS[sel.id]?.power ?? 0.5) : 0.5;
   triggerSwing();
   d.hp -= power;
@@ -1614,7 +1626,9 @@ function stopEatHold() {
 // ---------- Primary action (LEFT click: attack / chop / mine) ----------
 function onPrimaryAction() {
   if (buildMode) { placeGhostPiece(); return; }
-  if (!target) return;
+  // Air clicks swing too — the held item used to sit static when
+  // clicking at nothing (2026-10-30: swing on every non-mining click).
+  if (!target) { triggerSwing(); return; }
   if (target.kind === 'ground') return; // digging is hold-only, like chop/mine
   const sel = selectedItem();
   // Left click never interacts (no chests, benches, shops, cars) and
@@ -1634,6 +1648,7 @@ function onPrimaryAction() {
     // 'placed' targets to startHoldAction before getting here.
     return;
   } else if (target.kind === 'crop') {
+    triggerSwing();
     harvestCrop(target.ref);
   } else if (target.kind === 'darkened') {
     hitDarkened(target.ref);
