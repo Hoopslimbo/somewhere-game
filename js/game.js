@@ -4,7 +4,7 @@ import { buildWorld, heightAt, biomeAt, makeSkyDome, hideTreeInstances, refreshT
 import { ITEMS, RECIPES, QUICK_RECIPES, cleanText, load, save } from './data.js';
 import { itemIcon } from './icons.js';
 import { sfx, setVolume, setMuted, startEngine, setEngineLevel, stopEngine } from './audio.js';
-import { woodTex, brickTintedTex, shingleTintedTex, steelTex, goldLightTex, panelTex, pumpPanelTex, sidingTex, shadowTex, frostTex, soilTex, swirlTex, flakeTex, treadTex, appleTex, carrotTex, wheatTex, leatherTex, weaveTex, phoneTex, woodLightTex, stoneLightTex, leafLightTex, envTex, normalMapFor } from './textures.js';
+import { woodTex, brickTintedTex, shingleTintedTex, steelTex, goldLightTex, panelTex, pumpPanelTex, sidingTex, shadowTex, frostTex, soilTex, swirlTex, flakeTex, treadTex, appleTex, carrotTex, wheatTex, leatherTex, weaveTex, phoneTex, phoneScreenTex, woodLightTex, stoneLightTex, leafLightTex, envTex, normalMapFor } from './textures.js';
 
 const $ = (id) => document.getElementById(id);
 const S = window.Somewhere;
@@ -1554,16 +1554,16 @@ function dropMeshFor(id) {
     case 'shadow_sword': { // tapered dark blade + purple eye at the guard
       bx(0.05, 0.4, 0.05, M(0x1a1a24, 0.6), 0, -0.05, 0, 0, 0, 0.5);
       const bl = swordBladeMesh(
-        new THREE.MeshStandardMaterial({ map: shadowTex(), roughness: 0.35, metalness: 0.5 }),
+        texMat(shadowTex(), { roughness: 0.35, metalness: 0.5 }),
         new THREE.MeshStandardMaterial({ color: 0xb07aff, emissive: 0x7a5cff, emissiveIntensity: 0.9 }), 0.30, 0.06);
       bl.position.set(0, 0.10, 0); bl.rotation.z = 0.5; g.add(bl);
       sph(0.05, new THREE.MeshStandardMaterial({ color: 0xb07aff, emissive: 0xb07aff, emissiveIntensity: 1.4 }), 0.02, 0.16, 0.03); break; }
     case 'sword_wood': case 'sword_stone': case 'sword_iron': { // grip + tapered blade, matching the held look
       const bladeMat = id === 'sword_wood'
-        ? new THREE.MeshStandardMaterial({ map: woodTex(), roughness: 0.8 })
+        ? texMat(woodTex(), { roughness: 0.8 })
         : id === 'sword_stone'
-          ? new THREE.MeshStandardMaterial({ map: stoneLightTex(), color: 0x9aa0a8, roughness: 0.9 })
-          : new THREE.MeshStandardMaterial({ map: steelTex(), roughness: 0.35, metalness: 0.6 });
+          ? texMat(stoneLightTex(), { color: 0x9aa0a8, roughness: 0.9 })
+          : texMat(steelTex(), { roughness: 0.35, metalness: 0.6 });
       const edgeMat = id === 'sword_wood'
         ? new THREE.MeshStandardMaterial({ color: 0xc8a87e, roughness: 0.8 })
         : new THREE.MeshStandardMaterial({ color: 0xe8eaec, roughness: 0.25, metalness: 0.7 });
@@ -1613,12 +1613,20 @@ function vmBox(g, w, h, d, m, x, y, z, rx = 0, ry = 0, rz = 0) {
   mesh.position.set(x, y, z); mesh.rotation.set(rx, ry, rz);
   g.add(mesh); return mesh;
 }
+// Texture pass: held/dropped items get the same Sobel relief as
+// placed pieces — map + matching normal from the new canvases.
+function texMat(tex, extra = {}) {
+  const m = new THREE.MeshStandardMaterial({ map: tex, ...extra });
+  const n = normalMapFor(tex);
+  if (n) { m.normalMap = n; m.normalScale.set(0.6, 0.6); }
+  return m;
+}
 function buildViewmodel() {
   viewmodels = {};
-  const woodM = new THREE.MeshStandardMaterial({ map: woodTex(), roughness: 0.85 });
-  const woodDark = new THREE.MeshStandardMaterial({ map: woodTex(), color: 0x999999, roughness: 0.9 });
-  const steelM = new THREE.MeshStandardMaterial({ map: steelTex(), roughness: 0.35, metalness: 0.6 });
-  const steelDark = new THREE.MeshStandardMaterial({ map: steelTex(), color: 0x777777, roughness: 0.45, metalness: 0.6 });
+  const woodM = texMat(woodTex(), { roughness: 0.85 });
+  const woodDark = texMat(woodTex(), { color: 0x999999, roughness: 0.9 });
+  const steelM = texMat(steelTex(), { roughness: 0.35, metalness: 0.6 });
+  const steelDark = texMat(steelTex(), { color: 0x777777, roughness: 0.45, metalness: 0.6 });
   // Held tools sit small in the bottom-right corner of the view — the
   // old 0.72-long models at z=-0.80 filled half the screen and read as
   // a giant gray slab. These are ~0.40 long, farther out and lower, with
@@ -1641,7 +1649,7 @@ function buildViewmodel() {
   };
   // Brushed map under the tint: the head color still matches the
   // inventory icon, but the steel now reads as brushed metal.
-  const headMat = () => new THREE.MeshStandardMaterial({ map: steelTex(), color: 0xb8bcc2, roughness: 0.5, metalness: 0.15 });
+  const headMat = () => texMat(steelTex(), { color: 0xb8bcc2, roughness: 0.5, metalness: 0.15 });
   const headBox = (g, w, h, d, x, y, z, rx = 0, ry = 0, rz = 0) => {
     if (!g.userData.headMat) g.userData.headMat = headMat();
     const m = vmBox(g, w, h, d, g.userData.headMat, x, y, z, rx, ry, rz);
@@ -1689,7 +1697,7 @@ function buildViewmodel() {
   // a stone pickaxe.
   const rock = mk(0.44, -0.42, -1.05, 0.15, 0.25, -0.20);
   const rockMesh = new THREE.Mesh(new THREE.DodecahedronGeometry(0.16),
-    new THREE.MeshStandardMaterial({ map: stoneLightTex(), color: 0x6e7073, roughness: 1 }));
+    texMat(stoneLightTex(), { color: 0x6e7073, roughness: 1 }));
   rockMesh.scale.y = 0.78;
   rock.add(rockMesh);
   viewmodels.rock = rock;
@@ -1698,14 +1706,14 @@ function buildViewmodel() {
   // held. Same bottom-right framing as the tools.
   const apple = mk(0.44, -0.42, -1.05, 0.15, 0.10, -0.15);
   const appleMesh = new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 10),
-    new THREE.MeshStandardMaterial({ map: appleTex(), roughness: 0.55 }));
+    texMat(appleTex(), { roughness: 0.55 }));
   appleMesh.scale.y = 0.92; apple.add(appleMesh);
   vmBox(apple, 0.02, 0.08, 0.02, woodDark, 0, 0.13, 0); // stem
   viewmodels.apple = apple;
   // Carrot: orange point-down cone + green leafy top
   const carrot = mk(0.44, -0.42, -1.05, 0.15, 0.10, -0.15);
   const cone = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.26, 8),
-    new THREE.MeshStandardMaterial({ map: carrotTex(), roughness: 0.7 }));
+    texMat(carrotTex(), { roughness: 0.7 }));
   cone.rotation.x = Math.PI; carrot.add(cone);
   const leafM = new THREE.MeshStandardMaterial({ color: 0x3d7a32, roughness: 0.8 });
   vmBox(carrot, 0.025, 0.12, 0.025, leafM, 0, 0.17, 0);
@@ -1714,18 +1722,32 @@ function buildViewmodel() {
   viewmodels.carrot = carrot;
   // Wheat: three golden stalks with grain heads
   const wheat = mk(0.44, -0.42, -1.05, 0.15, 0.10, -0.15);
-  const stalkM = new THREE.MeshStandardMaterial({ map: wheatTex(), roughness: 0.8 });
-  const grainM = new THREE.MeshStandardMaterial({ map: wheatTex(), roughness: 0.8 });
+  const stalkM = texMat(wheatTex(), { roughness: 0.8 });
+  const grainM = texMat(wheatTex(), { roughness: 0.8 });
   for (const [x, h] of [[-0.05, 0.30], [0, 0.36], [0.05, 0.30]]) {
     vmBox(wheat, 0.02, h, 0.02, stalkM, x, 0, 0);
     vmBox(wheat, 0.05, 0.09, 0.05, grainM, x, h / 2 + 0.05, 0);
   }
   viewmodels.wheat = wheat;
-  // Phone: small dark slab with a glowing purple screen.
+  // Phone: small dark slab with a real home screen (texture pass).
   const phone = mk(0.44, -0.42, -1.05, 0.15, 0.10, -0.15);
-  vmBox(phone, 0.16, 0.30, 0.03, new THREE.MeshStandardMaterial({ map: phoneTex(), roughness: 0.4 }), 0, 0, 0);
-  vmBox(phone, 0.13, 0.20, 0.035, new THREE.MeshStandardMaterial({ color: 0x2a2a3a, roughness: 0.3, emissive: 0x7a5cff, emissiveIntensity: 0.5 }), 0, 0.02, 0);
+  vmBox(phone, 0.16, 0.30, 0.03, texMat(phoneTex(), { roughness: 0.4 }), 0, 0, 0);
+  vmBox(phone, 0.13, 0.20, 0.035, new THREE.MeshStandardMaterial({ map: phoneScreenTex(), emissive: 0xffffff, emissiveMap: phoneScreenTex(), emissiveIntensity: 0.8, roughness: 0.3 }), 0, 0.02, 0);
   viewmodels.phone = phone;
+  // Keys: held keys previously showed nothing (no tool type, no
+  // viewmodel). Small ring + shaft + teeth, matching the dropped
+  // key props, so a held key reads as a key.
+  const mkKey = (key, gold) => {
+    const k = mk(0.44, -0.42, -1.05, 0.15, 0.10, -0.15);
+    const goldM = texMat(goldLightTex(), { color: gold, roughness: 0.35, metalness: 0.8 });
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.012, 6, 14), goldM);
+    ring.position.set(-0.05, 0.06, 0); k.add(ring);
+    vmBox(k, 0.10, 0.035, 0.02, goldM, 0.04, 0.06, 0);
+    vmBox(k, 0.025, 0.025, 0.02, goldM, 0.09, 0.02, 0);
+    viewmodels[key] = k;
+  };
+  mkKey('car_key', 0xf5c542);
+  mkKey('house_key', 0xd8b25a);
   // Shadow Sword: dark blade, dark grip, and a purple eye where the
   // handle meets the blade — exactly as Liam described it.
   const ss = mk();
@@ -1733,7 +1755,7 @@ function buildViewmodel() {
   vmBox(ss, 0.16, 0.05, 0.05, new THREE.MeshStandardMaterial({ color: 0x3a3a4a, roughness: 0.5, metalness: 0.4 }), 0, 0.13, 0); // guard
   // Tapered blade + glowing edge ridge: no more flat rectangle.
   const ssBlade = swordBladeMesh(
-    new THREE.MeshStandardMaterial({ map: shadowTex(), roughness: 0.35, metalness: 0.5 }),
+    texMat(shadowTex(), { roughness: 0.35, metalness: 0.5 }),
     new THREE.MeshStandardMaterial({ color: 0xb07aff, emissive: 0x7a5cff, emissiveIntensity: 0.9 }));
   ssBlade.position.set(0, 0.15, 0); ss.add(ssBlade);
   const eye = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 8),
@@ -1751,13 +1773,13 @@ function buildViewmodel() {
     viewmodels[key] = s;
   };
   mkSword('sword_wood',
-    new THREE.MeshStandardMaterial({ map: woodTex(), roughness: 0.8 }),
+    texMat(woodTex(), { roughness: 0.8 }),
     new THREE.MeshStandardMaterial({ color: 0xc8a87e, roughness: 0.8 }));
   mkSword('sword_stone',
-    new THREE.MeshStandardMaterial({ map: stoneLightTex(), color: 0x9aa0a8, roughness: 0.9 }),
+    texMat(stoneLightTex(), { color: 0x9aa0a8, roughness: 0.9 }),
     new THREE.MeshStandardMaterial({ color: 0xc8ccd2, roughness: 0.4, metalness: 0.3 }));
   mkSword('sword_iron',
-    new THREE.MeshStandardMaterial({ map: steelTex(), roughness: 0.35, metalness: 0.6 }),
+    texMat(steelTex(), { roughness: 0.35, metalness: 0.6 }),
     new THREE.MeshStandardMaterial({ color: 0xe8eaec, roughness: 0.25, metalness: 0.7 }));
   for (const g of Object.values(viewmodels)) g.traverse((m) => { if (m.isMesh) m.castShadow = false; });
   // Back-compat: old code references `viewmodel` for driving visibility
@@ -2470,7 +2492,13 @@ function canvasTex(key, draw) {
 const _dropMatCache = {};
 function dropTexMat(tex, color, rough = 0.8, metal = 0) {
   const key = tex.uuid + '|' + color + '|' + rough + '|' + metal;
-  if (!_dropMatCache[key]) _dropMatCache[key] = new THREE.MeshStandardMaterial({ map: tex, color, roughness: rough, metalness: metal });
+  if (!_dropMatCache[key]) {
+    const m = new THREE.MeshStandardMaterial({ map: tex, color, roughness: rough, metalness: metal });
+    // Texture pass: drops get the same Sobel relief as placed pieces.
+    const n = normalMapFor(tex);
+    if (n) { m.normalMap = n; m.normalScale.set(0.6, 0.6); }
+    _dropMatCache[key] = m;
+  }
   return _dropMatCache[key];
 }
 function grainTex() { return woodTex(); }
